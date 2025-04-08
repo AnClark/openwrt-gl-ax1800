@@ -1,0 +1,11 @@
+--- a/Source/cmWorkerPool.h	2025-04-08 21:37:12.723168737 +0800
++++ b/Source/cmWorkerPool.h	2025-04-08 21:37:22.799919166 +0800
+@@ -33,7 +33,7 @@
+       return (ExitStatus != 0) || (TermSignal != 0) || !ErrorMessage.empty();
+     }
+ 
+-    std::int64_t ExitStatus = 0;
++    int64_t ExitStatus = 0;
+     int TermSignal = 0;
+     std::string StdOut;
+     std::string StdErr;
