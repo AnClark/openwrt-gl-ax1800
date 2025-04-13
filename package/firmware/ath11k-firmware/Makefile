@@ -4,17 +4,22 @@
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
 #
+# AnClark NOTE:
+# ath11k-firmware Repo moved from kvalo to codelinaro.org.
+# See https://lists.infradead.org/pipermail/ath10k/2024-March/015344.html for more details.
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ath11k-firmware
-PKG_SOURCE_DATE:=2021-07-20
-PKG_SOURCE_VERSION:=d4003c1921810adcc455d46f17776a3392b29436
-PKG_MIRROR_HASH:=6839081bafbc56d3b8e41d30790b20813c349cbc1732e887347ef5ed3ea717e4
+PKG_VERSION:=bc6359cb7ad38b7bc4de6580b7a3c70851c0cafb
 PKG_RELEASE:=1
 
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://github.com/kvalo/ath11k-firmware.git
+# NOTE: To prevent frequent git clone, download tarball instead.
+#PKG_SOURCE_PROTO:=git
+#PKG_SOURCE_URL:=https://git.codelinaro.org/clo/ath-firmware/ath11k-firmware.git/
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION)-nodoc.tar.bz2
+PKG_SOURCE_URL:=https://git.codelinaro.org/clo/ath-firmware/ath11k-firmware/-/archive/$(PKG_VERSION)
+PKG_HASH:=553b921963f5ea34eabd0b99cec60de1d01643fdc138e39abe87018aa75e1b29
 
 PKG_MAINTAINER:=Robert Marko <robimarko@gmail.com>
 
