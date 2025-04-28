@@ -1,0 +1,68 @@
+commit 111993692741a7044e6c01b428cecf1071de3d0b
+Author: Tonghao Zhang <xiangxia.m.yue@gmail.com>
+Date:   Mon Aug 21 23:33:49 2017 -0700
+
+    tcp: Remove the unused parameter for tcp_try_fastopen.
+    
+    Signed-off-by: Tonghao Zhang <xiangxia.m.yue@gmail.com>
+    Acked-by: Eric Dumazet <edumazet@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index afdab3781425..a995004ae946 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -1533,8 +1533,7 @@ int tcp_fastopen_reset_cipher(void *key, unsigned int len);
+ void tcp_fastopen_add_skb(struct sock *sk, struct sk_buff *skb);
+ struct sock *tcp_try_fastopen(struct sock *sk, struct sk_buff *skb,
+ 			      struct request_sock *req,
+-			      struct tcp_fastopen_cookie *foc,
+-			      struct dst_entry *dst);
++			      struct tcp_fastopen_cookie *foc);
+ void tcp_fastopen_init_key_once(bool publish);
+ bool tcp_fastopen_cookie_check(struct sock *sk, u16 *mss,
+ 			     struct tcp_fastopen_cookie *cookie);
+diff --git a/net/ipv4/tcp_fastopen.c b/net/ipv4/tcp_fastopen.c
+index ce9c7fef200f..e3c33220c418 100644
+--- a/net/ipv4/tcp_fastopen.c
++++ b/net/ipv4/tcp_fastopen.c
+@@ -171,7 +171,6 @@ void tcp_fastopen_add_skb(struct sock *sk, struct sk_buff *skb)
+ 
+ static struct sock *tcp_fastopen_create_child(struct sock *sk,
+ 					      struct sk_buff *skb,
+-					      struct dst_entry *dst,
+ 					      struct request_sock *req)
+ {
+ 	struct tcp_sock *tp;
+@@ -278,8 +277,7 @@ static bool tcp_fastopen_queue_check(struct sock *sk)
+  */
+ struct sock *tcp_try_fastopen(struct sock *sk, struct sk_buff *skb,
+ 			      struct request_sock *req,
+-			      struct tcp_fastopen_cookie *foc,
+-			      struct dst_entry *dst)
++			      struct tcp_fastopen_cookie *foc)
+ {
+ 	struct tcp_fastopen_cookie valid_foc = { .len = -1 };
+ 	bool syn_data = TCP_SKB_CB(skb)->end_seq != TCP_SKB_CB(skb)->seq + 1;
+@@ -312,7 +310,7 @@ struct sock *tcp_try_fastopen(struct sock *sk, struct sk_buff *skb,
+ 		 * data in SYN_RECV state.
+ 		 */
+ fastopen:
+-		child = tcp_fastopen_create_child(sk, skb, dst, req);
++		child = tcp_fastopen_create_child(sk, skb, req);
+ 		if (child) {
+ 			foc->len = -1;
+ 			NET_INC_STATS(sock_net(sk),
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index ab908949ee95..d3421ee9a10a 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -6150,7 +6150,7 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
+ 	tcp_openreq_init_rwin(req, sk, dst);
+ 	if (!want_cookie) {
+ 		tcp_reqsk_record_syn(sk, req, skb);
+-		fastopen_sk = tcp_try_fastopen(sk, skb, req, &foc, dst);
++		fastopen_sk = tcp_try_fastopen(sk, skb, req, &foc);
+ 	}
+ 	if (fastopen_sk) {
+ 		af_ops->send_synack(fastopen_sk, dst, &fl, req,

@@ -1,0 +1,159 @@
+commit eed29f17f09ad7f400bc245f209acad6a8214fac
+Author: Eric Dumazet <edumazet@google.com>
+Date:   Wed Jun 7 10:34:36 2017 -0700
+
+    tcp: add a struct net parameter to tcp_parse_options()
+    
+    We want to move some TCP sysctls to net namespaces in the future.
+    
+    tcp_window_scaling, tcp_sack and tcp_timestamps being fetched
+    from tcp_parse_options(), we need to pass an extra parameter.
+    
+    Signed-off-by: Eric Dumazet <edumazet@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/infiniband/hw/cxgb4/cm.c b/drivers/infiniband/hw/cxgb4/cm.c
+index b0ae4f0c8aa7..2f1136bf7b1f 100644
+--- a/drivers/infiniband/hw/cxgb4/cm.c
++++ b/drivers/infiniband/hw/cxgb4/cm.c
+@@ -3756,7 +3756,7 @@ static void build_cpl_pass_accept_req(struct sk_buff *skb, int stid , u8 tos)
+ 	 */
+ 	memset(&tmp_opt, 0, sizeof(tmp_opt));
+ 	tcp_clear_options(&tmp_opt);
+-	tcp_parse_options(skb, &tmp_opt, 0, NULL);
++	tcp_parse_options(&init_net, skb, &tmp_opt, 0, NULL);
+ 
+ 	req = (struct cpl_pass_accept_req *)__skb_push(skb, sizeof(*req));
+ 	memset(req, 0, sizeof(*req));
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 28b577a35786..0b0cfeefa05b 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -427,7 +427,7 @@ void tcp_set_keepalive(struct sock *sk, int val);
+ void tcp_syn_ack_timeout(const struct request_sock *req);
+ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
+ 		int flags, int *addr_len);
+-void tcp_parse_options(const struct sk_buff *skb,
++void tcp_parse_options(const struct net *net, const struct sk_buff *skb,
+ 		       struct tcp_options_received *opt_rx,
+ 		       int estab, struct tcp_fastopen_cookie *foc);
+ const u8 *tcp_parse_md5sig_option(const struct tcphdr *th);
+diff --git a/net/ipv4/syncookies.c b/net/ipv4/syncookies.c
+index 6426250a58ea..6a32cb381877 100644
+--- a/net/ipv4/syncookies.c
++++ b/net/ipv4/syncookies.c
+@@ -312,7 +312,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb)
+ 
+ 	/* check for timestamp cookie support */
+ 	memset(&tcp_opt, 0, sizeof(tcp_opt));
+-	tcp_parse_options(skb, &tcp_opt, 0, NULL);
++	tcp_parse_options(sock_net(sk), skb, &tcp_opt, 0, NULL);
+ 
+ 	if (tcp_opt.saw_tstamp && tcp_opt.rcv_tsecr) {
+ 		tsoff = secure_tcp_ts_off(ip_hdr(skb)->daddr, ip_hdr(skb)->saddr);
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 4ea8ec5c7bb4..99ee707f0ef4 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -3724,7 +3724,8 @@ static void tcp_parse_fastopen_option(int len, const unsigned char *cookie,
+  * But, this can also be called on packets in the established flow when
+  * the fast version below fails.
+  */
+-void tcp_parse_options(const struct sk_buff *skb,
++void tcp_parse_options(const struct net *net,
++		       const struct sk_buff *skb,
+ 		       struct tcp_options_received *opt_rx, int estab,
+ 		       struct tcp_fastopen_cookie *foc)
+ {
+@@ -3858,7 +3859,8 @@ static bool tcp_parse_aligned_timestamp(struct tcp_sock *tp, const struct tcphdr
+ /* Fast parse options. This hopes to only see timestamps.
+  * If it is wrong it falls back on tcp_parse_options().
+  */
+-static bool tcp_fast_parse_options(const struct sk_buff *skb,
++static bool tcp_fast_parse_options(const struct net *net,
++				   const struct sk_buff *skb,
+ 				   const struct tcphdr *th, struct tcp_sock *tp)
+ {
+ 	/* In the spirit of fast parsing, compare doff directly to constant
+@@ -3873,7 +3875,7 @@ static bool tcp_fast_parse_options(const struct sk_buff *skb,
+ 			return true;
+ 	}
+ 
+-	tcp_parse_options(skb, &tp->rx_opt, 1, NULL);
++	tcp_parse_options(net, skb, &tp->rx_opt, 1, NULL);
+ 	if (tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr)
+ 		tp->rx_opt.rcv_tsecr -= tp->tsoffset;
+ 
+@@ -5234,7 +5236,8 @@ static bool tcp_validate_incoming(struct sock *sk, struct sk_buff *skb,
+ 	bool rst_seq_match = false;
+ 
+ 	/* RFC1323: H1. Apply PAWS check first. */
+-	if (tcp_fast_parse_options(skb, th, tp) && tp->rx_opt.saw_tstamp &&
++	if (tcp_fast_parse_options(sock_net(sk), skb, th, tp) &&
++	    tp->rx_opt.saw_tstamp &&
+ 	    tcp_paws_discard(sk, skb)) {
+ 		if (!th->rst) {
+ 			NET_INC_STATS(sock_net(sk), LINUX_MIB_PAWSESTABREJECTED);
+@@ -5605,7 +5608,7 @@ static bool tcp_rcv_fastopen_synack(struct sock *sk, struct sk_buff *synack,
+ 		/* Get original SYNACK MSS value if user MSS sets mss_clamp */
+ 		tcp_clear_options(&opt);
+ 		opt.user_mss = opt.mss_clamp = 0;
+-		tcp_parse_options(synack, &opt, 0, NULL);
++		tcp_parse_options(sock_net(sk), synack, &opt, 0, NULL);
+ 		mss = opt.mss_clamp;
+ 	}
+ 
+@@ -5659,7 +5662,7 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
+ 	int saved_clamp = tp->rx_opt.mss_clamp;
+ 	bool fastopen_fail;
+ 
+-	tcp_parse_options(skb, &tp->rx_opt, 0, &foc);
++	tcp_parse_options(sock_net(sk), skb, &tp->rx_opt, 0, &foc);
+ 	if (tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr)
+ 		tp->rx_opt.rcv_tsecr -= tp->tsoffset;
+ 
+@@ -6332,7 +6335,8 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
+ 	tcp_clear_options(&tmp_opt);
+ 	tmp_opt.mss_clamp = af_ops->mss_clamp;
+ 	tmp_opt.user_mss  = tp->rx_opt.user_mss;
+-	tcp_parse_options(skb, &tmp_opt, 0, want_cookie ? NULL : &foc);
++	tcp_parse_options(sock_net(sk), skb, &tmp_opt, 0,
++			  want_cookie ? NULL : &foc);
+ 
+ 	if (want_cookie && !tmp_opt.saw_tstamp)
+ 		tcp_clear_options(&tmp_opt);
+diff --git a/net/ipv4/tcp_minisocks.c b/net/ipv4/tcp_minisocks.c
+index d0642df73044..d30ee31e94eb 100644
+--- a/net/ipv4/tcp_minisocks.c
++++ b/net/ipv4/tcp_minisocks.c
+@@ -98,7 +98,7 @@ tcp_timewait_state_process(struct inet_timewait_sock *tw, struct sk_buff *skb,
+ 
+ 	tmp_opt.saw_tstamp = 0;
+ 	if (th->doff > (sizeof(*th) >> 2) && tcptw->tw_ts_recent_stamp) {
+-		tcp_parse_options(skb, &tmp_opt, 0, NULL);
++		tcp_parse_options(twsk_net(tw), skb, &tmp_opt, 0, NULL);
+ 
+ 		if (tmp_opt.saw_tstamp) {
+ 			if (tmp_opt.rcv_tsecr)
+@@ -559,7 +559,7 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
+ 
+ 	tmp_opt.saw_tstamp = 0;
+ 	if (th->doff > (sizeof(struct tcphdr)>>2)) {
+-		tcp_parse_options(skb, &tmp_opt, 0, NULL);
++		tcp_parse_options(sock_net(sk), skb, &tmp_opt, 0, NULL);
+ 
+ 		if (tmp_opt.saw_tstamp) {
+ 			tmp_opt.ts_recent = req->ts_recent;
+diff --git a/net/ipv6/syncookies.c b/net/ipv6/syncookies.c
+index 971823359f5b..4c0a047ec230 100644
+--- a/net/ipv6/syncookies.c
++++ b/net/ipv6/syncookies.c
+@@ -162,7 +162,7 @@ struct sock *cookie_v6_check(struct sock *sk, struct sk_buff *skb)
+ 
+ 	/* check for timestamp cookie support */
+ 	memset(&tcp_opt, 0, sizeof(tcp_opt));
+-	tcp_parse_options(skb, &tcp_opt, 0, NULL);
++	tcp_parse_options(sock_net(sk), skb, &tcp_opt, 0, NULL);
+ 
+ 	if (tcp_opt.saw_tstamp && tcp_opt.rcv_tsecr) {
+ 		tsoff = secure_tcpv6_ts_off(ipv6_hdr(skb)->daddr.s6_addr32,

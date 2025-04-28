@@ -1,0 +1,37 @@
+commit f0716cd6eb89f769bff3b37120219720c994bb7e
+Author: Florian Westphal <fw@strlen.de>
+Date:   Wed Mar 9 00:04:21 2016 +0100
+
+    netfilter: nft_compat: check match/targetinfo attr size
+    
+    We copy according to ->target|matchsize, so check that the netlink attribute
+    (which can include padding and might be larger) contains enough data.
+    
+    Reported-by: Julia Lawall <Julia.Lawall@lip6.fr>
+    Signed-off-by: Florian Westphal <fw@strlen.de>
+    Signed-off-by: Pablo Neira Ayuso <pablo@netfilter.org>
+
+diff --git a/net/netfilter/nft_compat.c b/net/netfilter/nft_compat.c
+index 454841baa4d0..6228c422c766 100644
+--- a/net/netfilter/nft_compat.c
++++ b/net/netfilter/nft_compat.c
+@@ -660,6 +660,9 @@ nft_match_select_ops(const struct nft_ctx *ctx,
+ 	if (IS_ERR(match))
+ 		return ERR_PTR(-ENOENT);
+ 
++	if (match->matchsize > nla_len(tb[NFTA_MATCH_INFO]))
++		return ERR_PTR(-EINVAL);
++
+ 	/* This is the first time we use this match, allocate operations */
+ 	nft_match = kzalloc(sizeof(struct nft_xt), GFP_KERNEL);
+ 	if (nft_match == NULL)
+@@ -740,6 +743,9 @@ nft_target_select_ops(const struct nft_ctx *ctx,
+ 	if (IS_ERR(target))
+ 		return ERR_PTR(-ENOENT);
+ 
++	if (target->targetsize > nla_len(tb[NFTA_TARGET_INFO]))
++		return ERR_PTR(-EINVAL);
++
+ 	/* This is the first time we use this target, allocate operations */
+ 	nft_target = kzalloc(sizeof(struct nft_xt), GFP_KERNEL);
+ 	if (nft_target == NULL)

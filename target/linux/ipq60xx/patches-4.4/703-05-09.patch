@@ -1,0 +1,101 @@
+commit 4979f2d9f7262b9b180bc83de8d70f7a7721c085
+Author: Nikolay Borisov <kernel@kyup.com>
+Date:   Wed Feb 3 09:46:57 2016 +0200
+
+    ipv4: Namespaceify tcp_notsent_lowat sysctl knob
+    
+    Signed-off-by: Nikolay Borisov <kernel@kyup.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/netns/ipv4.h b/include/net/netns/ipv4.h
+index de5ff4385e84..4d6ec3f6fafe 100644
+--- a/include/net/netns/ipv4.h
++++ b/include/net/netns/ipv4.h
+@@ -106,6 +106,7 @@ struct netns_ipv4 {
+ 	int sysctl_tcp_retries2;
+ 	int sysctl_tcp_orphan_retries;
+ 	int sysctl_tcp_fin_timeout;
++	unsigned int sysctl_tcp_notsent_lowat;
+ 
+ 	struct ping_group_range ping_group_range;
+ 
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 3f160c2e6960..9b2cb0c8d876 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -267,7 +267,6 @@ extern int sysctl_tcp_thin_dupack;
+ extern int sysctl_tcp_early_retrans;
+ extern int sysctl_tcp_limit_output_bytes;
+ extern int sysctl_tcp_challenge_ack_limit;
+-extern unsigned int sysctl_tcp_notsent_lowat;
+ extern int sysctl_tcp_min_tso_segs;
+ extern int sysctl_tcp_min_rtt_wlen;
+ extern int sysctl_tcp_autocorking;
+@@ -1682,7 +1681,8 @@ void __tcp_v4_send_check(struct sk_buff *skb, __be32 saddr, __be32 daddr);
+ 
+ static inline u32 tcp_notsent_lowat(const struct tcp_sock *tp)
+ {
+-	return tp->notsent_lowat ?: sysctl_tcp_notsent_lowat;
++	struct net *net = sock_net((struct sock *)tp);
++	return tp->notsent_lowat ?: net->ipv4.sysctl_tcp_notsent_lowat;
+ }
+ 
+ static inline bool tcp_stream_memory_free(const struct sock *sk)
+diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
+index 8bd335a2cba8..44bb59824267 100644
+--- a/net/ipv4/sysctl_net_ipv4.c
++++ b/net/ipv4/sysctl_net_ipv4.c
+@@ -455,13 +455,6 @@ static struct ctl_table ipv4_table[] = {
+ 		.proc_handler	= proc_dointvec_minmax,
+ 		.extra1		= &one,
+ 	},
+-	{
+-		.procname	= "tcp_notsent_lowat",
+-		.data		= &sysctl_tcp_notsent_lowat,
+-		.maxlen		= sizeof(sysctl_tcp_notsent_lowat),
+-		.mode		= 0644,
+-		.proc_handler	= proc_dointvec,
+-	},
+ 	{
+ 		.procname	= "tcp_rmem",
+ 		.data		= &sysctl_tcp_rmem,
+@@ -960,6 +953,13 @@ static struct ctl_table ipv4_net_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec_jiffies,
+ 	},
++	{
++		.procname	= "tcp_notsent_lowat",
++		.data		= &init_net.ipv4.sysctl_tcp_notsent_lowat,
++		.maxlen		= sizeof(unsigned int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec,
++	},
+ 	{ }
+ };
+ 
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 36c83c28d9c9..11ae706f53a1 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -2395,6 +2395,7 @@ static int __net_init tcp_sk_init(struct net *net)
+ 	net->ipv4.sysctl_tcp_retries2 = TCP_RETR2;
+ 	net->ipv4.sysctl_tcp_orphan_retries = 0;
+ 	net->ipv4.sysctl_tcp_fin_timeout = TCP_FIN_TIMEOUT;
++	net->ipv4.sysctl_tcp_notsent_lowat = UINT_MAX;
+ 
+ 	return 0;
+ fail:
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 7beb3f688b7a..7d2c7a400456 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -62,9 +62,6 @@ int sysctl_tcp_tso_win_divisor __read_mostly = 3;
+ /* By default, RFC2861 behavior.  */
+ int sysctl_tcp_slow_start_after_idle __read_mostly = 1;
+ 
+-unsigned int sysctl_tcp_notsent_lowat __read_mostly = UINT_MAX;
+-EXPORT_SYMBOL(sysctl_tcp_notsent_lowat);
+-
+ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
+ 			   int push_one, gfp_t gfp);
+ 

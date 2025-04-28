@@ -1,0 +1,419 @@
+commit 6aef70a851ac77967992340faaff33f44598f60a
+Author: Eric Dumazet <edumazet@google.com>
+Date:   Wed Apr 27 16:44:27 2016 -0700
+
+    net: snmp: kill various STATS_USER() helpers
+    
+    In the old days (before linux-3.0), SNMP counters were duplicated,
+    one for user context, and one for BH context.
+    
+    After commit 8f0ea0fe3a03 ("snmp: reduce percpu needs by 50%")
+    we have a single copy, and what really matters is preemption being
+    enabled or disabled, since we use this_cpu_inc() or __this_cpu_inc()
+    respectively.
+    
+    We therefore kill SNMP_INC_STATS_USER(), SNMP_ADD_STATS_USER(),
+    NET_INC_STATS_USER(), NET_ADD_STATS_USER(), SCTP_INC_STATS_USER(),
+    SNMP_INC_STATS64_USER(), SNMP_ADD_STATS64_USER(), TCP_ADD_STATS_USER(),
+    UDP_INC_STATS_USER(), UDP6_INC_STATS_USER(), and XFRM_INC_STATS_USER()
+    
+    Following patches will rename __BH helpers to make clear their
+    usage is not tied to BH being disabled.
+    
+    Signed-off-by: Eric Dumazet <edumazet@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/ip.h b/include/net/ip.h
+index 93725e546758..ae0e85d018e8 100644
+--- a/include/net/ip.h
++++ b/include/net/ip.h
+@@ -194,10 +194,8 @@ void ip_send_unicast_reply(struct sock *sk, struct sk_buff *skb,
+ #define IP_UPD_PO_STATS_BH(net, field, val) SNMP_UPD_PO_STATS64_BH((net)->mib.ip_statistics, field, val)
+ #define NET_INC_STATS(net, field)	SNMP_INC_STATS((net)->mib.net_statistics, field)
+ #define NET_INC_STATS_BH(net, field)	SNMP_INC_STATS_BH((net)->mib.net_statistics, field)
+-#define NET_INC_STATS_USER(net, field) 	SNMP_INC_STATS_USER((net)->mib.net_statistics, field)
+ #define NET_ADD_STATS(net, field, adnd)	SNMP_ADD_STATS((net)->mib.net_statistics, field, adnd)
+ #define NET_ADD_STATS_BH(net, field, adnd) SNMP_ADD_STATS_BH((net)->mib.net_statistics, field, adnd)
+-#define NET_ADD_STATS_USER(net, field, adnd) SNMP_ADD_STATS_USER((net)->mib.net_statistics, field, adnd)
+ 
+ u64 snmp_get_cpu_field(void __percpu *mib, int cpu, int offct);
+ unsigned long snmp_fold_field(void __percpu *mib, int offt);
+diff --git a/include/net/sctp/sctp.h b/include/net/sctp/sctp.h
+index 3f1c0ff7d4b6..5a2c4c3307a7 100644
+--- a/include/net/sctp/sctp.h
++++ b/include/net/sctp/sctp.h
+@@ -207,7 +207,6 @@ extern int sysctl_sctp_wmem[3];
+ /* SCTP SNMP MIB stats handlers */
+ #define SCTP_INC_STATS(net, field)      SNMP_INC_STATS((net)->sctp.sctp_statistics, field)
+ #define SCTP_INC_STATS_BH(net, field)   SNMP_INC_STATS_BH((net)->sctp.sctp_statistics, field)
+-#define SCTP_INC_STATS_USER(net, field) SNMP_INC_STATS_USER((net)->sctp.sctp_statistics, field)
+ #define SCTP_DEC_STATS(net, field)      SNMP_DEC_STATS((net)->sctp.sctp_statistics, field)
+ 
+ /* sctp mib definitions */
+diff --git a/include/net/snmp.h b/include/net/snmp.h
+index 35512ac6dcfb..56239fc05c51 100644
+--- a/include/net/snmp.h
++++ b/include/net/snmp.h
+@@ -126,9 +126,6 @@ struct linux_xfrm_mib {
+ #define SNMP_INC_STATS_BH(mib, field)	\
+ 			__this_cpu_inc(mib->mibs[field])
+ 
+-#define SNMP_INC_STATS_USER(mib, field)	\
+-			this_cpu_inc(mib->mibs[field])
+-
+ #define SNMP_INC_STATS_ATOMIC_LONG(mib, field)	\
+ 			atomic_long_inc(&mib->mibs[field])
+ 
+@@ -141,9 +138,6 @@ struct linux_xfrm_mib {
+ #define SNMP_ADD_STATS_BH(mib, field, addend)	\
+ 			__this_cpu_add(mib->mibs[field], addend)
+ 
+-#define SNMP_ADD_STATS_USER(mib, field, addend)	\
+-			this_cpu_add(mib->mibs[field], addend)
+-
+ #define SNMP_ADD_STATS(mib, field, addend)	\
+ 			this_cpu_add(mib->mibs[field], addend)
+ #define SNMP_UPD_PO_STATS(mib, basefield, addend)	\
+@@ -170,18 +164,14 @@ struct linux_xfrm_mib {
+ 		u64_stats_update_end(&ptr->syncp);			\
+ 	} while (0)
+ 
+-#define SNMP_ADD_STATS64_USER(mib, field, addend) 			\
++#define SNMP_ADD_STATS64(mib, field, addend) 			\
+ 	do {								\
+-		local_bh_disable();					\
++		preempt_disable();					\
+ 		SNMP_ADD_STATS64_BH(mib, field, addend);		\
+-		local_bh_enable();					\
++		preempt_enable();					\
+ 	} while (0)
+ 
+-#define SNMP_ADD_STATS64(mib, field, addend)				\
+-		SNMP_ADD_STATS64_USER(mib, field, addend)
+-
+ #define SNMP_INC_STATS64_BH(mib, field) SNMP_ADD_STATS64_BH(mib, field, 1)
+-#define SNMP_INC_STATS64_USER(mib, field) SNMP_ADD_STATS64_USER(mib, field, 1)
+ #define SNMP_INC_STATS64(mib, field) SNMP_ADD_STATS64(mib, field, 1)
+ #define SNMP_UPD_PO_STATS64_BH(mib, basefield, addend)			\
+ 	do {								\
+@@ -194,17 +184,15 @@ struct linux_xfrm_mib {
+ 	} while (0)
+ #define SNMP_UPD_PO_STATS64(mib, basefield, addend)			\
+ 	do {								\
+-		local_bh_disable();					\
++		preempt_disable();					\
+ 		SNMP_UPD_PO_STATS64_BH(mib, basefield, addend);		\
+-		local_bh_enable();					\
++		preempt_enable();					\
+ 	} while (0)
+ #else
+ #define SNMP_INC_STATS64_BH(mib, field)		SNMP_INC_STATS_BH(mib, field)
+-#define SNMP_INC_STATS64_USER(mib, field)	SNMP_INC_STATS_USER(mib, field)
+ #define SNMP_INC_STATS64(mib, field)		SNMP_INC_STATS(mib, field)
+ #define SNMP_DEC_STATS64(mib, field)		SNMP_DEC_STATS(mib, field)
+ #define SNMP_ADD_STATS64_BH(mib, field, addend) SNMP_ADD_STATS_BH(mib, field, addend)
+-#define SNMP_ADD_STATS64_USER(mib, field, addend) SNMP_ADD_STATS_USER(mib, field, addend)
+ #define SNMP_ADD_STATS64(mib, field, addend)	SNMP_ADD_STATS(mib, field, addend)
+ #define SNMP_UPD_PO_STATS64(mib, basefield, addend) SNMP_UPD_PO_STATS(mib, basefield, addend)
+ #define SNMP_UPD_PO_STATS64_BH(mib, basefield, addend) SNMP_UPD_PO_STATS_BH(mib, basefield, addend)
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 7f2553da10d1..cfe15f712164 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -334,7 +334,6 @@ extern struct proto tcp_prot;
+ #define TCP_INC_STATS(net, field)	SNMP_INC_STATS((net)->mib.tcp_statistics, field)
+ #define TCP_INC_STATS_BH(net, field)	SNMP_INC_STATS_BH((net)->mib.tcp_statistics, field)
+ #define TCP_DEC_STATS(net, field)	SNMP_DEC_STATS((net)->mib.tcp_statistics, field)
+-#define TCP_ADD_STATS_USER(net, field, val) SNMP_ADD_STATS_USER((net)->mib.tcp_statistics, field, val)
+ #define TCP_ADD_STATS(net, field, val)	SNMP_ADD_STATS((net)->mib.tcp_statistics, field, val)
+ 
+ void tcp_tasklet_init(void);
+@@ -1298,10 +1297,10 @@ bool tcp_oow_rate_limited(struct net *net, const struct sk_buff *skb,
+ static inline void tcp_mib_init(struct net *net)
+ {
+ 	/* See RFC 2012 */
+-	TCP_ADD_STATS_USER(net, TCP_MIB_RTOALGORITHM, 1);
+-	TCP_ADD_STATS_USER(net, TCP_MIB_RTOMIN, TCP_RTO_MIN*1000/HZ);
+-	TCP_ADD_STATS_USER(net, TCP_MIB_RTOMAX, TCP_RTO_MAX*1000/HZ);
+-	TCP_ADD_STATS_USER(net, TCP_MIB_MAXCONN, -1);
++	TCP_ADD_STATS(net, TCP_MIB_RTOALGORITHM, 1);
++	TCP_ADD_STATS(net, TCP_MIB_RTOMIN, TCP_RTO_MIN*1000/HZ);
++	TCP_ADD_STATS(net, TCP_MIB_RTOMAX, TCP_RTO_MAX*1000/HZ);
++	TCP_ADD_STATS(net, TCP_MIB_MAXCONN, -1);
+ }
+ 
+ /* from STCP */
+diff --git a/include/net/udp.h b/include/net/udp.h
+index 3c5a65e0946d..2f37f689d85a 100644
+--- a/include/net/udp.h
++++ b/include/net/udp.h
+@@ -289,20 +289,20 @@ struct sock *udp6_lib_lookup_skb(struct sk_buff *skb,
+ /*
+  * 	SNMP statistics for UDP and UDP-Lite
+  */
+-#define UDP_INC_STATS_USER(net, field, is_udplite)	      do { \
+-	if (is_udplite) SNMP_INC_STATS_USER((net)->mib.udplite_statistics, field);       \
+-	else		SNMP_INC_STATS_USER((net)->mib.udp_statistics, field);  }  while(0)
++#define UDP_INC_STATS(net, field, is_udplite)		      do { \
++	if (is_udplite) SNMP_INC_STATS((net)->mib.udplite_statistics, field);       \
++	else		SNMP_INC_STATS((net)->mib.udp_statistics, field);  }  while(0)
+ #define UDP_INC_STATS_BH(net, field, is_udplite) 	      do { \
+ 	if (is_udplite) SNMP_INC_STATS_BH((net)->mib.udplite_statistics, field);         \
+ 	else		SNMP_INC_STATS_BH((net)->mib.udp_statistics, field);    }  while(0)
+ 
+-#define UDP6_INC_STATS_BH(net, field, is_udplite) 	    do { \
++#define UDP6_INC_STATS_BH(net, field, is_udplite)	    do { \
+ 	if (is_udplite) SNMP_INC_STATS_BH((net)->mib.udplite_stats_in6, field);\
+ 	else		SNMP_INC_STATS_BH((net)->mib.udp_stats_in6, field);  \
+ } while(0)
+-#define UDP6_INC_STATS_USER(net, field, __lite)		    do { \
+-	if (__lite) SNMP_INC_STATS_USER((net)->mib.udplite_stats_in6, field);  \
+-	else	    SNMP_INC_STATS_USER((net)->mib.udp_stats_in6, field);      \
++#define UDP6_INC_STATS(net, field, __lite)		    do { \
++	if (__lite) SNMP_INC_STATS((net)->mib.udplite_stats_in6, field);  \
++	else	    SNMP_INC_STATS((net)->mib.udp_stats_in6, field);      \
+ } while(0)
+ 
+ #if IS_ENABLED(CONFIG_IPV6)
+diff --git a/include/net/xfrm.h b/include/net/xfrm.h
+index d6f6e5006ee9..dab9e1b82963 100644
+--- a/include/net/xfrm.h
++++ b/include/net/xfrm.h
+@@ -46,11 +46,9 @@
+ #ifdef CONFIG_XFRM_STATISTICS
+ #define XFRM_INC_STATS(net, field)	SNMP_INC_STATS((net)->mib.xfrm_statistics, field)
+ #define XFRM_INC_STATS_BH(net, field)	SNMP_INC_STATS_BH((net)->mib.xfrm_statistics, field)
+-#define XFRM_INC_STATS_USER(net, field)	SNMP_INC_STATS_USER((net)-mib.xfrm_statistics, field)
+ #else
+ #define XFRM_INC_STATS(net, field)	((void)(net))
+ #define XFRM_INC_STATS_BH(net, field)	((void)(net))
+-#define XFRM_INC_STATS_USER(net, field)	((void)(net))
+ #endif
+ 
+ 
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 4d73858991af..55ef55ac9e38 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -1443,7 +1443,7 @@ static void tcp_prequeue_process(struct sock *sk)
+ 	struct sk_buff *skb;
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 
+-	NET_INC_STATS_USER(sock_net(sk), LINUX_MIB_TCPPREQUEUED);
++	NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPPREQUEUED);
+ 
+ 	/* RX process wants to run with disabled BHs, though it is not
+ 	 * necessary */
+@@ -1777,7 +1777,7 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
+ 
+ 			chunk = len - tp->ucopy.len;
+ 			if (chunk != 0) {
+-				NET_ADD_STATS_USER(sock_net(sk), LINUX_MIB_TCPDIRECTCOPYFROMBACKLOG, chunk);
++				NET_ADD_STATS(sock_net(sk), LINUX_MIB_TCPDIRECTCOPYFROMBACKLOG, chunk);
+ 				len -= chunk;
+ 				copied += chunk;
+ 			}
+@@ -1789,7 +1789,7 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
+ 
+ 				chunk = len - tp->ucopy.len;
+ 				if (chunk != 0) {
+-					NET_ADD_STATS_USER(sock_net(sk), LINUX_MIB_TCPDIRECTCOPYFROMPREQUEUE, chunk);
++					NET_ADD_STATS(sock_net(sk), LINUX_MIB_TCPDIRECTCOPYFROMPREQUEUE, chunk);
+ 					len -= chunk;
+ 					copied += chunk;
+ 				}
+@@ -1875,7 +1875,7 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
+ 			tcp_prequeue_process(sk);
+ 
+ 			if (copied > 0 && (chunk = len - tp->ucopy.len) != 0) {
+-				NET_ADD_STATS_USER(sock_net(sk), LINUX_MIB_TCPDIRECTCOPYFROMPREQUEUE, chunk);
++				NET_ADD_STATS(sock_net(sk), LINUX_MIB_TCPDIRECTCOPYFROMPREQUEUE, chunk);
+ 				len -= chunk;
+ 				copied += chunk;
+ 			}
+@@ -2065,13 +2065,13 @@ void tcp_close(struct sock *sk, long timeout)
+ 		sk->sk_prot->disconnect(sk, 0);
+ 	} else if (data_was_unread) {
+ 		/* Unread data was tossed, zap the connection. */
+-		NET_INC_STATS_USER(sock_net(sk), LINUX_MIB_TCPABORTONCLOSE);
++		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONCLOSE);
+ 		tcp_set_state(sk, TCP_CLOSE);
+ 		tcp_send_active_reset(sk, sk->sk_allocation);
+ 	} else if (sock_flag(sk, SOCK_LINGER) && !sk->sk_lingertime) {
+ 		/* Check zero linger _after_ checking for unread data. */
+ 		sk->sk_prot->disconnect(sk, 0);
+-		NET_INC_STATS_USER(sock_net(sk), LINUX_MIB_TCPABORTONDATA);
++		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONDATA);
+ 	} else if (tcp_close_state(sk)) {
+ 		/* We FIN if the application ate all the data before
+ 		 * zapping the connection.
+diff --git a/net/ipv4/udp.c b/net/ipv4/udp.c
+index 76ea0a8be090..00f5de9a155e 100644
+--- a/net/ipv4/udp.c
++++ b/net/ipv4/udp.c
+@@ -882,13 +882,13 @@ static int udp_send_skb(struct sk_buff *skb, struct flowi4 *fl4)
+ 	err = ip_send_skb(sock_net(sk), skb);
+ 	if (err) {
+ 		if (err == -ENOBUFS && !inet->recverr) {
+-			UDP_INC_STATS_USER(sock_net(sk),
+-					   UDP_MIB_SNDBUFERRORS, is_udplite);
++			UDP_INC_STATS(sock_net(sk),
++				      UDP_MIB_SNDBUFERRORS, is_udplite);
+ 			err = 0;
+ 		}
+ 	} else
+-		UDP_INC_STATS_USER(sock_net(sk),
+-				   UDP_MIB_OUTDATAGRAMS, is_udplite);
++		UDP_INC_STATS(sock_net(sk),
++			      UDP_MIB_OUTDATAGRAMS, is_udplite);
+ 	return err;
+ }
+ 
+@@ -1157,8 +1157,8 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
+ 	 * seems like overkill.
+ 	 */
+ 	if (err == -ENOBUFS || test_bit(SOCK_NOSPACE, &sk->sk_socket->flags)) {
+-		UDP_INC_STATS_USER(sock_net(sk),
+-				UDP_MIB_SNDBUFERRORS, is_udplite);
++		UDP_INC_STATS(sock_net(sk),
++			      UDP_MIB_SNDBUFERRORS, is_udplite);
+ 	}
+ 	return err;
+ 
+@@ -1352,16 +1352,16 @@ int udp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int noblock,
+ 		trace_kfree_skb(skb, udp_recvmsg);
+ 		if (!peeked) {
+ 			atomic_inc(&sk->sk_drops);
+-			UDP_INC_STATS_USER(sock_net(sk),
+-					   UDP_MIB_INERRORS, is_udplite);
++			UDP_INC_STATS(sock_net(sk),
++				      UDP_MIB_INERRORS, is_udplite);
+ 		}
+ 		skb_free_datagram_locked(sk, skb);
+ 		return err;
+ 	}
+ 
+ 	if (!peeked)
+-		UDP_INC_STATS_USER(sock_net(sk),
+-				UDP_MIB_INDATAGRAMS, is_udplite);
++		UDP_INC_STATS(sock_net(sk),
++			      UDP_MIB_INDATAGRAMS, is_udplite);
+ 
+ 	sock_recv_ts_and_drops(msg, sk, skb);
+ 
+@@ -1386,8 +1386,8 @@ int udp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int noblock,
+ csum_copy_err:
+ 	slow = lock_sock_fast(sk);
+ 	if (!skb_kill_datagram(sk, skb, flags)) {
+-		UDP_INC_STATS_USER(sock_net(sk), UDP_MIB_CSUMERRORS, is_udplite);
+-		UDP_INC_STATS_USER(sock_net(sk), UDP_MIB_INERRORS, is_udplite);
++		UDP_INC_STATS(sock_net(sk), UDP_MIB_CSUMERRORS, is_udplite);
++		UDP_INC_STATS(sock_net(sk), UDP_MIB_INERRORS, is_udplite);
+ 	}
+ 	unlock_sock_fast(sk, slow);
+ 
+diff --git a/net/ipv6/udp.c b/net/ipv6/udp.c
+index 8d8b2cd8ec5b..baa56ca41a31 100644
+--- a/net/ipv6/udp.c
++++ b/net/ipv6/udp.c
+@@ -423,24 +423,22 @@ int udpv6_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
+ 		if (!peeked) {
+ 			atomic_inc(&sk->sk_drops);
+ 			if (is_udp4)
+-				UDP_INC_STATS_USER(sock_net(sk),
+-						   UDP_MIB_INERRORS,
+-						   is_udplite);
++				UDP_INC_STATS(sock_net(sk), UDP_MIB_INERRORS,
++					      is_udplite);
+ 			else
+-				UDP6_INC_STATS_USER(sock_net(sk),
+-						    UDP_MIB_INERRORS,
+-						    is_udplite);
++				UDP6_INC_STATS(sock_net(sk), UDP_MIB_INERRORS,
++					       is_udplite);
+ 		}
+ 		skb_free_datagram_locked(sk, skb);
+ 		return err;
+ 	}
+ 	if (!peeked) {
+ 		if (is_udp4)
+-			UDP_INC_STATS_USER(sock_net(sk),
+-					UDP_MIB_INDATAGRAMS, is_udplite);
++			UDP_INC_STATS(sock_net(sk), UDP_MIB_INDATAGRAMS,
++				      is_udplite);
+ 		else
+-			UDP6_INC_STATS_USER(sock_net(sk),
+-					UDP_MIB_INDATAGRAMS, is_udplite);
++			UDP6_INC_STATS(sock_net(sk), UDP_MIB_INDATAGRAMS,
++				       is_udplite);
+ 	}
+ 
+ 	sock_recv_ts_and_drops(msg, sk, skb);
+@@ -487,15 +485,15 @@ int udpv6_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
+ 	slow = lock_sock_fast(sk);
+ 	if (!skb_kill_datagram(sk, skb, flags)) {
+ 		if (is_udp4) {
+-			UDP_INC_STATS_USER(sock_net(sk),
+-					UDP_MIB_CSUMERRORS, is_udplite);
+-			UDP_INC_STATS_USER(sock_net(sk),
+-					UDP_MIB_INERRORS, is_udplite);
++			UDP_INC_STATS(sock_net(sk),
++				      UDP_MIB_CSUMERRORS, is_udplite);
++			UDP_INC_STATS(sock_net(sk),
++				      UDP_MIB_INERRORS, is_udplite);
+ 		} else {
+-			UDP6_INC_STATS_USER(sock_net(sk),
+-					UDP_MIB_CSUMERRORS, is_udplite);
+-			UDP6_INC_STATS_USER(sock_net(sk),
+-					UDP_MIB_INERRORS, is_udplite);
++			UDP6_INC_STATS(sock_net(sk),
++				       UDP_MIB_CSUMERRORS, is_udplite);
++			UDP6_INC_STATS(sock_net(sk),
++				       UDP_MIB_INERRORS, is_udplite);
+ 		}
+ 	}
+ 	unlock_sock_fast(sk, slow);
+@@ -1015,13 +1013,14 @@ static int udp_v6_send_skb(struct sk_buff *skb, struct flowi6 *fl6)
+ 	err = ip6_send_skb(skb);
+ 	if (err) {
+ 		if (err == -ENOBUFS && !inet6_sk(sk)->recverr) {
+-			UDP6_INC_STATS_USER(sock_net(sk),
+-					    UDP_MIB_SNDBUFERRORS, is_udplite);
++			UDP6_INC_STATS(sock_net(sk),
++				       UDP_MIB_SNDBUFERRORS, is_udplite);
+ 			err = 0;
+ 		}
+-	} else
+-		UDP6_INC_STATS_USER(sock_net(sk),
+-				    UDP_MIB_OUTDATAGRAMS, is_udplite);
++	} else {
++		UDP6_INC_STATS(sock_net(sk),
++			       UDP_MIB_OUTDATAGRAMS, is_udplite);
++	}
+ 	return err;
+ }
+ 
+@@ -1342,8 +1341,8 @@ int udpv6_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
+ 	 * seems like overkill.
+ 	 */
+ 	if (err == -ENOBUFS || test_bit(SOCK_NOSPACE, &sk->sk_socket->flags)) {
+-		UDP6_INC_STATS_USER(sock_net(sk),
+-				UDP_MIB_SNDBUFERRORS, is_udplite);
++		UDP6_INC_STATS(sock_net(sk),
++			       UDP_MIB_SNDBUFERRORS, is_udplite);
+ 	}
+ 	return err;
+ 
+diff --git a/net/sctp/chunk.c b/net/sctp/chunk.c
+index 958ef5f33f4b..1eb94bf18ef4 100644
+--- a/net/sctp/chunk.c
++++ b/net/sctp/chunk.c
+@@ -239,7 +239,7 @@ struct sctp_datamsg *sctp_datamsg_from_user(struct sctp_association *asoc,
+ 	offset = 0;
+ 
+ 	if ((whole > 1) || (whole && over))
+-		SCTP_INC_STATS_USER(sock_net(asoc->base.sk), SCTP_MIB_FRAGUSRMSGS);
++		SCTP_INC_STATS(sock_net(asoc->base.sk), SCTP_MIB_FRAGUSRMSGS);
+ 
+ 	/* Create chunks for all the full sized DATA chunks. */
+ 	for (i = 0, len = first_len; i < whole; i++) {

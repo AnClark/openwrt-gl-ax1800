@@ -1,0 +1,90 @@
+commit 6f094b9ec680209c5b7314feee983b2f4c910b1b
+Author: Lawrence Brakmo <brakmo@fb.com>
+Date:   Wed Jun 8 21:16:44 2016 -0700
+
+    tcp: add in_flight to tcp_skb_cb
+    
+    Add in_flight (bytes in flight when packet was sent) field
+    to tx component of tcp_skb_cb and make it available to
+    congestion modules' pkts_acked() function through the
+    ack_sample function argument.
+    
+    Signed-off-by: Lawrence Brakmo <brakmo@fb.com>
+    Acked-by: Yuchung Cheng <ycheng@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 0bcc70f4e1fb..a79894b66726 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -767,6 +767,7 @@ struct tcp_skb_cb {
+ 	union {
+ 		struct {
+ 			/* There is space for up to 20 bytes */
++			__u32 in_flight;/* Bytes in flight when packet sent */
+ 		} tx;   /* only used for outgoing skbs */
+ 		union {
+ 			struct inet_skb_parm	h4;
+@@ -859,6 +860,7 @@ union tcp_cc_info;
+ struct ack_sample {
+ 	u32 pkts_acked;
+ 	s32 rtt_us;
++	u32 in_flight;
+ };
+ 
+ struct tcp_congestion_ops {
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 89dd8d82826f..94d4aff97523 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -3115,6 +3115,7 @@ static int tcp_clean_rtx_queue(struct sock *sk, int prior_fackets,
+ 	long ca_rtt_us = -1L;
+ 	struct sk_buff *skb;
+ 	u32 pkts_acked = 0;
++	u32 last_in_flight = 0;
+ 	bool rtt_update;
+ 	int flag = 0;
+ 
+@@ -3154,6 +3155,7 @@ static int tcp_clean_rtx_queue(struct sock *sk, int prior_fackets,
+ 			if (!first_ackt.v64)
+ 				first_ackt = last_ackt;
+ 
++			last_in_flight = TCP_SKB_CB(skb)->tx.in_flight;
+ 			reord = min(pkts_acked, reord);
+ 			if (!after(scb->end_seq, tp->high_seq))
+ 				flag |= FLAG_ORIG_SACK_ACKED;
+@@ -3250,7 +3252,8 @@ static int tcp_clean_rtx_queue(struct sock *sk, int prior_fackets,
+ 
+ 	if (icsk->icsk_ca_ops->pkts_acked) {
+ 		struct ack_sample sample = { .pkts_acked = pkts_acked,
+-					     .rtt_us = ca_rtt_us };
++					     .rtt_us = ca_rtt_us,
++					     .in_flight = last_in_flight };
+ 
+ 		icsk->icsk_ca_ops->pkts_acked(sk, &sample);
+ 	}
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 8bd9911fdd16..b1bcba0563f2 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -911,9 +911,12 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
+ 	int err;
+ 
+ 	BUG_ON(!skb || !tcp_skb_pcount(skb));
++	tp = tcp_sk(sk);
+ 
+ 	if (clone_it) {
+ 		skb_mstamp_get(&skb->skb_mstamp);
++		TCP_SKB_CB(skb)->tx.in_flight = TCP_SKB_CB(skb)->end_seq
++			- tp->snd_una;
+ 
+ 		if (unlikely(skb_cloned(skb)))
+ 			skb = pskb_copy(skb, gfp_mask);
+@@ -924,7 +927,6 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
+ 	}
+ 
+ 	inet = inet_sk(sk);
+-	tp = tcp_sk(sk);
+ 	tcb = TCP_SKB_CB(skb);
+ 	memset(&opts, 0, sizeof(opts));
+ 

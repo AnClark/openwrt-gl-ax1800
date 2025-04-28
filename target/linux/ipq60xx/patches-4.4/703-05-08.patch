@@ -1,0 +1,125 @@
+commit 1e579caa18b96f9eb18f4f5416658cd15f37c062
+Author: Nikolay Borisov <kernel@kyup.com>
+Date:   Wed Feb 3 09:46:56 2016 +0200
+
+    ipv4: Namespaceify tcp_fin_timeout sysctl knob
+    
+    Signed-off-by: Nikolay Borisov <kernel@kyup.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/netns/ipv4.h b/include/net/netns/ipv4.h
+index 080230321985..de5ff4385e84 100644
+--- a/include/net/netns/ipv4.h
++++ b/include/net/netns/ipv4.h
+@@ -105,6 +105,7 @@ struct netns_ipv4 {
+ 	int sysctl_tcp_retries1;
+ 	int sysctl_tcp_retries2;
+ 	int sysctl_tcp_orphan_retries;
++	int sysctl_tcp_fin_timeout;
+ 
+ 	struct ping_group_range ping_group_range;
+ 
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 71f840b89c76..3f160c2e6960 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -239,7 +239,6 @@ extern struct inet_timewait_death_row tcp_death_row;
+ extern int sysctl_tcp_timestamps;
+ extern int sysctl_tcp_window_scaling;
+ extern int sysctl_tcp_sack;
+-extern int sysctl_tcp_fin_timeout;
+ extern int sysctl_tcp_fastopen;
+ extern int sysctl_tcp_retrans_collapse;
+ extern int sysctl_tcp_stdurg;
+@@ -1249,7 +1248,7 @@ static inline u32 keepalive_time_elapsed(const struct tcp_sock *tp)
+ 
+ static inline int tcp_fin_time(const struct sock *sk)
+ {
+-	int fin_timeout = tcp_sk(sk)->linger2 ? : sysctl_tcp_fin_timeout;
++	int fin_timeout = tcp_sk(sk)->linger2 ? : sock_net(sk)->ipv4.sysctl_tcp_fin_timeout;
+ 	const int rto = inet_csk(sk)->icsk_rto;
+ 
+ 	if (fin_timeout < (rto << 2) - (rto >> 1))
+diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
+index b7af6336985f..8bd335a2cba8 100644
+--- a/net/ipv4/sysctl_net_ipv4.c
++++ b/net/ipv4/sysctl_net_ipv4.c
+@@ -319,13 +319,6 @@ static struct ctl_table ipv4_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec
+ 	},
+-	{
+-		.procname	= "tcp_fin_timeout",
+-		.data		= &sysctl_tcp_fin_timeout,
+-		.maxlen		= sizeof(int),
+-		.mode		= 0644,
+-		.proc_handler	= proc_dointvec_jiffies,
+-	},
+ 	{
+ 		.procname	= "tcp_fastopen",
+ 		.data		= &sysctl_tcp_fastopen,
+@@ -960,6 +953,13 @@ static struct ctl_table ipv4_net_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec
+ 	},
++	{
++		.procname	= "tcp_fin_timeout",
++		.data		= &init_net.ipv4.sysctl_tcp_fin_timeout,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_jiffies,
++	},
+ 	{ }
+ };
+ 
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index f4db6b04cdb4..014f18e2f7b3 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -282,8 +282,6 @@
+ #include <asm/unaligned.h>
+ #include <net/busy_poll.h>
+ 
+-int sysctl_tcp_fin_timeout __read_mostly = TCP_FIN_TIMEOUT;
+-
+ int sysctl_tcp_min_tso_segs __read_mostly = 2;
+ 
+ int sysctl_tcp_autocorking __read_mostly = 1;
+@@ -2330,6 +2328,7 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	struct inet_connection_sock *icsk = inet_csk(sk);
++	struct net *net = sock_net(sk);
+ 	int val;
+ 	int err = 0;
+ 
+@@ -2526,7 +2525,7 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
+ 	case TCP_LINGER2:
+ 		if (val < 0)
+ 			tp->linger2 = -1;
+-		else if (val > sysctl_tcp_fin_timeout / HZ)
++		else if (val > net->ipv4.sysctl_tcp_fin_timeout / HZ)
+ 			tp->linger2 = 0;
+ 		else
+ 			tp->linger2 = val * HZ;
+@@ -2771,7 +2770,7 @@ static int do_tcp_getsockopt(struct sock *sk, int level,
+ 	case TCP_LINGER2:
+ 		val = tp->linger2;
+ 		if (val >= 0)
+-			val = (val ? : sysctl_tcp_fin_timeout) / HZ;
++			val = (val ? : net->ipv4.sysctl_tcp_fin_timeout) / HZ;
+ 		break;
+ 	case TCP_DEFER_ACCEPT:
+ 		val = retrans_to_secs(icsk->icsk_accept_queue.rskq_defer_accept,
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 1240dd62eee1..36c83c28d9c9 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -2394,6 +2394,7 @@ static int __net_init tcp_sk_init(struct net *net)
+ 	net->ipv4.sysctl_tcp_retries1 = TCP_RETR1;
+ 	net->ipv4.sysctl_tcp_retries2 = TCP_RETR2;
+ 	net->ipv4.sysctl_tcp_orphan_retries = 0;
++	net->ipv4.sysctl_tcp_fin_timeout = TCP_FIN_TIMEOUT;
+ 
+ 	return 0;
+ fail:

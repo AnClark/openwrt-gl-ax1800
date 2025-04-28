@@ -1,0 +1,128 @@
+commit c6214a97c86c660de4f7ddb8eed925192e646161
+Author: Nikolay Borisov <kernel@kyup.com>
+Date:   Wed Feb 3 09:46:54 2016 +0200
+
+    ipv4: Namespaceify tcp_retries2 sysctl knob
+    
+    Signed-off-by: Nikolay Borisov <kernel@kyup.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/netns/ipv4.h b/include/net/netns/ipv4.h
+index dee6ba647461..d92c8e5d0fbc 100644
+--- a/include/net/netns/ipv4.h
++++ b/include/net/netns/ipv4.h
+@@ -103,6 +103,7 @@ struct netns_ipv4 {
+ 	int sysctl_tcp_syncookies;
+ 	int sysctl_tcp_reordering;
+ 	int sysctl_tcp_retries1;
++	int sysctl_tcp_retries2;
+ 
+ 	struct ping_group_range ping_group_range;
+ 
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index da96b9af3e5f..a786cfa6301b 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -240,7 +240,6 @@ extern int sysctl_tcp_timestamps;
+ extern int sysctl_tcp_window_scaling;
+ extern int sysctl_tcp_sack;
+ extern int sysctl_tcp_fin_timeout;
+-extern int sysctl_tcp_retries2;
+ extern int sysctl_tcp_orphan_retries;
+ extern int sysctl_tcp_fastopen;
+ extern int sysctl_tcp_retrans_collapse;
+diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
+index 52853c6dc929..8e339d43619c 100644
+--- a/net/ipv4/sysctl_net_ipv4.c
++++ b/net/ipv4/sysctl_net_ipv4.c
+@@ -319,13 +319,6 @@ static struct ctl_table ipv4_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec
+ 	},
+-	{
+-		.procname	= "tcp_retries2",
+-		.data		= &sysctl_tcp_retries2,
+-		.maxlen		= sizeof(int),
+-		.mode		= 0644,
+-		.proc_handler	= proc_dointvec
+-	},
+ 	{
+ 		.procname	= "tcp_fin_timeout",
+ 		.data		= &sysctl_tcp_fin_timeout,
+@@ -960,6 +953,13 @@ static struct ctl_table ipv4_net_table[] = {
+ 		.proc_handler	= proc_dointvec_minmax,
+ 		.extra2		= &tcp_retr1_max
+ 	},
++	{
++		.procname	= "tcp_retries2",
++		.data		= &init_net.ipv4.sysctl_tcp_retries2,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec
++	},
+ 	{ }
+ };
+ 
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 57fe3c6bfb30..0710e6108a5e 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -2392,6 +2392,7 @@ static int __net_init tcp_sk_init(struct net *net)
+ 	net->ipv4.sysctl_tcp_syncookies = 0;
+ 	net->ipv4.sysctl_tcp_reordering = TCP_FASTRETRANS_THRESH;
+ 	net->ipv4.sysctl_tcp_retries1 = TCP_RETR1;
++	net->ipv4.sysctl_tcp_retries2 = TCP_RETR2;
+ 
+ 	return 0;
+ fail:
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index fda379cd600d..7beb3f688b7a 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -3476,6 +3476,7 @@ void tcp_send_probe0(struct sock *sk)
+ {
+ 	struct inet_connection_sock *icsk = inet_csk(sk);
+ 	struct tcp_sock *tp = tcp_sk(sk);
++	struct net *net = sock_net(sk);
+ 	unsigned long probe_max;
+ 	int err;
+ 
+@@ -3489,7 +3490,7 @@ void tcp_send_probe0(struct sock *sk)
+ 	}
+ 
+ 	if (err <= 0) {
+-		if (icsk->icsk_backoff < sysctl_tcp_retries2)
++		if (icsk->icsk_backoff < net->ipv4.sysctl_tcp_retries2)
+ 			icsk->icsk_backoff++;
+ 		icsk->icsk_probes_out++;
+ 		probe_max = TCP_RTO_MAX;
+diff --git a/net/ipv4/tcp_timer.c b/net/ipv4/tcp_timer.c
+index 6694e33149b9..09f4e0297e56 100644
+--- a/net/ipv4/tcp_timer.c
++++ b/net/ipv4/tcp_timer.c
+@@ -22,7 +22,6 @@
+ #include <linux/gfp.h>
+ #include <net/tcp.h>
+ 
+-int sysctl_tcp_retries2 __read_mostly = TCP_RETR2;
+ int sysctl_tcp_orphan_retries __read_mostly;
+ int sysctl_tcp_thin_linear_timeouts __read_mostly;
+ 
+@@ -189,7 +188,7 @@ static int tcp_write_timeout(struct sock *sk)
+ 			dst_negative_advice(sk);
+ 		}
+ 
+-		retry_until = sysctl_tcp_retries2;
++		retry_until = net->ipv4.sysctl_tcp_retries2;
+ 		if (sock_flag(sk, SOCK_DEAD)) {
+ 			const bool alive = icsk->icsk_rto < TCP_RTO_MAX;
+ 
+@@ -303,7 +302,7 @@ static void tcp_probe_timer(struct sock *sk)
+ 		 (s32)(tcp_time_stamp - start_ts) > icsk->icsk_user_timeout)
+ 		goto abort;
+ 
+-	max_probes = sysctl_tcp_retries2;
++	max_probes = sock_net(sk)->ipv4.sysctl_tcp_retries2;
+ 	if (sock_flag(sk, SOCK_DEAD)) {
+ 		const bool alive = inet_csk_rto_backoff(icsk, TCP_RTO_MAX) < TCP_RTO_MAX;
+ 

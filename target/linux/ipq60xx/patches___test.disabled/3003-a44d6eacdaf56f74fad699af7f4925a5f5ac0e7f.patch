@@ -1,0 +1,187 @@
+commit a44d6eacdaf56f74fad699af7f4925a5f5ac0e7f
+Author: Martin KaFai Lau <kafai@fb.com>
+Date:   Mon Mar 14 10:52:15 2016 -0700
+
+    tcp: Add RFC4898 tcpEStatsPerfDataSegsOut/In
+    
+    Per RFC4898, they count segments sent/received
+    containing a positive length data segment (that includes
+    retransmission segments carrying data).  Unlike
+    tcpi_segs_out/in, tcpi_data_segs_out/in excludes segments
+    carrying no data (e.g. pure ack).
+    
+    The patch also updates the segs_in in tcp_fastopen_add_skb()
+    so that segs_in >= data_segs_in property is kept.
+    
+    Together with retransmission data, tcpi_data_segs_out
+    gives a better signal on the rxmit rate.
+    
+    v6: Rebase on the latest net-next
+    
+    v5: Eric pointed out that checking skb->len is still needed in
+    tcp_fastopen_add_skb() because skb can carry a FIN without data.
+    Hence, instead of open coding segs_in and data_segs_in, tcp_segs_in()
+    helper is used.  Comment is added to the fastopen case to explain why
+    segs_in has to be reset and tcp_segs_in() has to be called before
+    __skb_pull().
+    
+    v4: Add comment to the changes in tcp_fastopen_add_skb()
+    and also add remark on this case in the commit message.
+    
+    v3: Add const modifier to the skb parameter in tcp_segs_in()
+    
+    v2: Rework based on recent fix by Eric:
+    commit a9d99ce28ed3 ("tcp: fix tcpi_segs_in after connection establishment")
+    
+    Signed-off-by: Martin KaFai Lau <kafai@fb.com>
+    Cc: Chris Rapier <rapier@psc.edu>
+    Cc: Eric Dumazet <edumazet@google.com>
+    Cc: Marcelo Ricardo Leitner <mleitner@redhat.com>
+    Cc: Neal Cardwell <ncardwell@google.com>
+    Cc: Yuchung Cheng <ycheng@google.com>
+    Acked-by: Eric Dumazet <edumazet@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/linux/tcp.h b/include/linux/tcp.h
+index bcbf51da4e1e..7be9b1242354 100644
+--- a/include/linux/tcp.h
++++ b/include/linux/tcp.h
+@@ -158,6 +158,9 @@ struct tcp_sock {
+ 	u32	segs_in;	/* RFC4898 tcpEStatsPerfSegsIn
+ 				 * total number of segments in.
+ 				 */
++	u32	data_segs_in;	/* RFC4898 tcpEStatsPerfDataSegsIn
++				 * total number of data segments in.
++				 */
+  	u32	rcv_nxt;	/* What we want to receive next 	*/
+ 	u32	copied_seq;	/* Head of yet unread data		*/
+ 	u32	rcv_wup;	/* rcv_nxt on last window update sent	*/
+@@ -165,6 +168,9 @@ struct tcp_sock {
+ 	u32	segs_out;	/* RFC4898 tcpEStatsPerfSegsOut
+ 				 * The total number of segments sent.
+ 				 */
++	u32	data_segs_out;	/* RFC4898 tcpEStatsPerfDataSegsOut
++				 * total number of data segments sent.
++				 */
+ 	u64	bytes_acked;	/* RFC4898 tcpEStatsAppHCThruOctetsAcked
+ 				 * sum(delta(snd_una)), or how many bytes
+ 				 * were acked.
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 0302636af98c..c8dbd293daae 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -1840,4 +1840,14 @@ static inline int tcp_inq(struct sock *sk)
+ 	return answ;
+ }
+ 
++static inline void tcp_segs_in(struct tcp_sock *tp, const struct sk_buff *skb)
++{
++	u16 segs_in;
++
++	segs_in = max_t(u16, 1, skb_shinfo(skb)->gso_segs);
++	tp->segs_in += segs_in;
++	if (skb->len > tcp_hdrlen(skb))
++		tp->data_segs_in += segs_in;
++}
++
+ #endif	/* _TCP_H */
+diff --git a/include/uapi/linux/tcp.h b/include/uapi/linux/tcp.h
+index fe95446e9abf..53e8e3fe6b1b 100644
+--- a/include/uapi/linux/tcp.h
++++ b/include/uapi/linux/tcp.h
+@@ -199,6 +199,8 @@ struct tcp_info {
+ 
+ 	__u32	tcpi_notsent_bytes;
+ 	__u32	tcpi_min_rtt;
++	__u32	tcpi_data_segs_in;	/* RFC4898 tcpEStatsDataSegsIn */
++	__u32	tcpi_data_segs_out;	/* RFC4898 tcpEStatsDataSegsOut */
+ };
+ 
+ /* for TCP_MD5SIG socket option */
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index a265f00b9df9..992b3103ec3e 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -2715,6 +2715,8 @@ void tcp_get_info(struct sock *sk, struct tcp_info *info)
+ 	info->tcpi_notsent_bytes = max(0, notsent_bytes);
+ 
+ 	info->tcpi_min_rtt = tcp_min_rtt(tp);
++	info->tcpi_data_segs_in = tp->data_segs_in;
++	info->tcpi_data_segs_out = tp->data_segs_out;
+ }
+ EXPORT_SYMBOL_GPL(tcp_get_info);
+ 
+diff --git a/net/ipv4/tcp_fastopen.c b/net/ipv4/tcp_fastopen.c
+index fdb286ddba04..4fc0061bebf4 100644
+--- a/net/ipv4/tcp_fastopen.c
++++ b/net/ipv4/tcp_fastopen.c
+@@ -140,6 +140,14 @@ void tcp_fastopen_add_skb(struct sock *sk, struct sk_buff *skb)
+ 		return;
+ 
+ 	skb_dst_drop(skb);
++	/* segs_in has been initialized to 1 in tcp_create_openreq_child().
++	 * Hence, reset segs_in to 0 before calling tcp_segs_in()
++	 * to avoid double counting.  Also, tcp_segs_in() expects
++	 * skb->len to include the tcp_hdrlen.  Hence, it should
++	 * be called before __skb_pull().
++	 */
++	tp->segs_in = 0;
++	tcp_segs_in(tp, skb);
+ 	__skb_pull(skb, tcp_hdrlen(skb));
+ 	skb_set_owner_r(skb, sk);
+ 
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 4c8d58dfac9b..0b02ef773705 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -1650,7 +1650,7 @@ int tcp_v4_rcv(struct sk_buff *skb)
+ 	sk_incoming_cpu_update(sk);
+ 
+ 	bh_lock_sock_nested(sk);
+-	tcp_sk(sk)->segs_in += max_t(u16, 1, skb_shinfo(skb)->gso_segs);
++	tcp_segs_in(tcp_sk(sk), skb);
+ 	ret = 0;
+ 	if (!sock_owned_by_user(sk)) {
+ 		if (!tcp_prequeue(sk, skb))
+diff --git a/net/ipv4/tcp_minisocks.c b/net/ipv4/tcp_minisocks.c
+index ae90e4b34bd3..acb366dd61e6 100644
+--- a/net/ipv4/tcp_minisocks.c
++++ b/net/ipv4/tcp_minisocks.c
+@@ -812,7 +812,7 @@ int tcp_child_process(struct sock *parent, struct sock *child,
+ 	int ret = 0;
+ 	int state = child->sk_state;
+ 
+-	tcp_sk(child)->segs_in += max_t(u16, 1, skb_shinfo(skb)->gso_segs);
++	tcp_segs_in(tcp_sk(child), skb);
+ 	if (!sock_owned_by_user(child)) {
+ 		ret = tcp_rcv_state_process(child, skb);
+ 		/* Wakeup parent, send SIGIO */
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 7d2c7a400456..7d2dc015cd19 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -1003,8 +1003,10 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
+ 	if (likely(tcb->tcp_flags & TCPHDR_ACK))
+ 		tcp_event_ack_sent(sk, tcp_skb_pcount(skb));
+ 
+-	if (skb->len != tcp_header_size)
++	if (skb->len != tcp_header_size) {
+ 		tcp_event_data_sent(tp, sk);
++		tp->data_segs_out += tcp_skb_pcount(skb);
++	}
+ 
+ 	if (after(tcb->end_seq, tp->snd_nxt) || tcb->seq == tcb->end_seq)
+ 		TCP_ADD_STATS(sock_net(sk), TCP_MIB_OUTSEGS,
+diff --git a/net/ipv6/tcp_ipv6.c b/net/ipv6/tcp_ipv6.c
+index 33f2820181f9..9c16565b70cc 100644
+--- a/net/ipv6/tcp_ipv6.c
++++ b/net/ipv6/tcp_ipv6.c
+@@ -1443,7 +1443,7 @@ static int tcp_v6_rcv(struct sk_buff *skb)
+ 	sk_incoming_cpu_update(sk);
+ 
+ 	bh_lock_sock_nested(sk);
+-	tcp_sk(sk)->segs_in += max_t(u16, 1, skb_shinfo(skb)->gso_segs);
++	tcp_segs_in(tcp_sk(sk), skb);
+ 	ret = 0;
+ 	if (!sock_owned_by_user(sk)) {
+ 		if (!tcp_prequeue(sk, skb))

@@ -1,0 +1,338 @@
+commit 713bafea92920103cd3d361657406cf04d0e22dd
+Author: Yuchung Cheng <ycheng@google.com>
+Date:   Wed Nov 8 13:01:26 2017 -0800
+
+    tcp: retire FACK loss detection
+    
+    FACK loss detection has been disabled by default and the
+    successor RACK subsumed FACK and can handle reordering better.
+    This patch removes FACK to simplify TCP loss recovery.
+    
+    Signed-off-by: Yuchung Cheng <ycheng@google.com>
+    Reviewed-by: Eric Dumazet <edumazet@google.com>
+    Reviewed-by: Neal Cardwell <ncardwell@google.com>
+    Reviewed-by: Soheil Hassas Yeganeh <soheil@google.com>
+    Reviewed-by: Priyaranjan Jha <priyarjha@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+    
+    [ANCLARK NOTE] 2025/04/28
+    Tailored for QSDK Linux 4.4 source tree.
+
+diff --git a/Documentation/networking/ip-sysctl.txt b/Documentation/networking/ip-sysctl.txt
+index d8676dda7fa6..46c7e1085efc 100644
+--- a/Documentation/networking/ip-sysctl.txt
++++ b/Documentation/networking/ip-sysctl.txt
+@@ -289,8 +289,7 @@ tcp_ecn_fallback - BOOLEAN
+ 	Default: 1 (fallback enabled)
+ 
+ tcp_fack - BOOLEAN
+-	Enable FACK congestion avoidance and fast retransmission.
+-	The value is not used, if tcp_sack is not enabled.
++	This is a legacy option, it has no effect anymore.
+ 
+ tcp_fin_timeout - INTEGER
+ 	The length of time an orphaned (no longer referenced by any
+diff --git a/include/linux/tcp.h b/include/linux/tcp.h
+index 22f40c96a15b..9574936fe041 100644
+--- a/include/linux/tcp.h
++++ b/include/linux/tcp.h
+@@ -85,7 +85,6 @@ struct tcp_sack_block {
+ 
+ /*These are used to set the sack_ok field in struct tcp_options_received */
+ #define TCP_SACK_SEEN     (1 << 0)   /*1 = peer is SACK capable, */
+-#define TCP_FACK_ENABLED  (1 << 1)   /*1 = FACK is enabled locally*/
+ #define TCP_DSACK_SEEN    (1 << 2)   /*1 = DSACK was received from peer*/
+ 
+ struct tcp_options_received {
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 2f2c69ad31b2..ed71511e67a6 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -421,7 +421,6 @@ bool tcp_peer_is_proven(struct request_sock *req, struct dst_entry *dst,
+ bool tcp_remember_stamp(struct sock *sk);
+ bool tcp_tw_remember_stamp(struct inet_timewait_sock *tw);
+ void tcp_fetch_timewait_stamp(struct sock *sk, struct dst_entry *dst);
+-void tcp_disable_fack(struct tcp_sock *tp);
+ void tcp_close(struct sock *sk, long timeout);
+ void tcp_init_sock(struct sock *sk);
+ unsigned int tcp_poll(struct file *file, struct socket *sock,
+@@ -755,7 +754,7 @@ struct tcp_skb_cb {
+ 	};
+ 	__u8		tcp_flags;	/* TCP header flags. (tcp[13])	*/
+ 
+-	__u8		sacked;		/* State flags for SACK/FACK.	*/
++	__u8		sacked;		/* State flags for SACK.	*/
+ #define TCPCB_SACKED_ACKED	0x01	/* SKB ACK'd by a SACK block	*/
+ #define TCPCB_SACKED_RETRANS	0x02	/* SKB retransmitted		*/
+ #define TCPCB_LOST		0x04	/* SKB is lost			*/
+@@ -952,7 +951,6 @@ static inline void tcp_ca_event(struct sock *sk, const enum tcp_ca_event event)
+  *
+  * tcp_is_sack - SACK enabled
+  * tcp_is_reno - No SACK
+- * tcp_is_fack - FACK enabled, implies SACK enabled
+  */
+ static inline int tcp_is_sack(const struct tcp_sock *tp)
+ {
+@@ -964,16 +962,6 @@ static inline bool tcp_is_reno(const struct tcp_sock *tp)
+ 	return !tcp_is_sack(tp);
+ }
+ 
+-static inline bool tcp_is_fack(const struct tcp_sock *tp)
+-{
+-	return tp->rx_opt.sack_ok & TCP_FACK_ENABLED;
+-}
+-
+-static inline void tcp_enable_fack(struct tcp_sock *tp)
+-{
+-	tp->rx_opt.sack_ok |= TCP_FACK_ENABLED;
+-}
+-
+ /* TCP early-retransmit (ER) is similar to but more conservative than
+  * the thin-dupack feature.  Enable ER only if thin-dupack is disabled.
+  */
+diff --git a/include/uapi/linux/snmp.h b/include/uapi/linux/snmp.h
+index 0d941cdd8e8c..33a70ece462f 100644
+--- a/include/uapi/linux/snmp.h
++++ b/include/uapi/linux/snmp.h
+@@ -191,7 +191,6 @@ enum
+ 	LINUX_MIB_TCPRENORECOVERY,		/* TCPRenoRecovery */
+ 	LINUX_MIB_TCPSACKRECOVERY,		/* TCPSackRecovery */
+ 	LINUX_MIB_TCPSACKRENEGING,		/* TCPSACKReneging */
+-	LINUX_MIB_TCPFACKREORDER,		/* TCPFACKReorder */
+ 	LINUX_MIB_TCPSACKREORDER,		/* TCPSACKReorder */
+ 	LINUX_MIB_TCPRENOREORDER,		/* TCPRenoReorder */
+ 	LINUX_MIB_TCPTSREORDER,			/* TCPTSReorder */
+diff --git a/net/ipv4/proc.c b/net/ipv4/proc.c
+index 127153f1ed8a..9f37c4727861 100644
+--- a/net/ipv4/proc.c
++++ b/net/ipv4/proc.c
+@@ -212,7 +212,6 @@ static const struct snmp_mib snmp4_net_list[] = {
+ 	SNMP_MIB_ITEM("TCPRenoRecovery", LINUX_MIB_TCPRENORECOVERY),
+ 	SNMP_MIB_ITEM("TCPSackRecovery", LINUX_MIB_TCPSACKRECOVERY),
+ 	SNMP_MIB_ITEM("TCPSACKReneging", LINUX_MIB_TCPSACKRENEGING),
+-	SNMP_MIB_ITEM("TCPFACKReorder", LINUX_MIB_TCPFACKREORDER),
+ 	SNMP_MIB_ITEM("TCPSACKReorder", LINUX_MIB_TCPSACKREORDER),
+ 	SNMP_MIB_ITEM("TCPRenoReorder", LINUX_MIB_TCPRENOREORDER),
+ 	SNMP_MIB_ITEM("TCPTSReorder", LINUX_MIB_TCPTSREORDER),
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index bc71a27d5ad9..337555076043 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -2509,8 +2509,6 @@ static int tcp_repair_options_est(struct sock *sk,
+ 				return -EINVAL;
+ 
+ 			tp->rx_opt.sack_ok |= TCP_SACK_SEEN;
+-			if (sock_net(sk)->ipv4.sysctl_tcp_fack)
+-				tcp_enable_fack(tp);
+ 			break;
+ 		case TCPOPT_TIMESTAMP:
+ 			if (opt.opt_val != 0)
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 9ceaa1fdc3ab..487e181cff86 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -842,18 +842,6 @@ __u32 tcp_init_cwnd(const struct tcp_sock *tp, const struct dst_entry *dst)
+ 	return min_t(__u32, cwnd, tp->snd_cwnd_clamp);
+ }
+ 
+-/*
+- * Packet counting of FACK is based on in-order assumptions, therefore TCP
+- * disables it when reordering is detected
+- */
+-void tcp_disable_fack(struct tcp_sock *tp)
+-{
+-	/* RFC3517 uses different metric in lost marker => reset on change */
+-	if (tcp_is_fack(tp))
+-		tp->lost_skb_hint = NULL;
+-	tp->rx_opt.sack_ok &= ~TCP_FACK_ENABLED;
+-}
+-
+ /* Take a notice that peer is sending D-SACKs */
+ static void tcp_dsack_seen(struct tcp_sock *tp)
+ {
+@@ -881,7 +869,6 @@ static void tcp_update_reordering(struct sock *sk, const int metric,
+ 			 tp->sacked_out,
+ 			 tp->undo_marker ? tp->undo_retrans : 0);
+ #endif
+-		tcp_disable_fack(tp);
+ 	}
+ 
+ 	tp->rack.reord = 1;
+@@ -891,8 +878,6 @@ static void tcp_update_reordering(struct sock *sk, const int metric,
+ 		mib_idx = LINUX_MIB_TCPTSREORDER;
+ 	else if (tcp_is_reno(tp))
+ 		mib_idx = LINUX_MIB_TCPRENOREORDER;
+-	else if (tcp_is_fack(tp))
+-		mib_idx = LINUX_MIB_TCPFACKREORDER;
+ 	else
+ 		mib_idx = LINUX_MIB_TCPSACKREORDER;
+ 
+@@ -970,7 +955,6 @@ void tcp_skb_mark_lost_uncond_verify(struct tcp_sock *tp, struct sk_buff *skb)
+  * 3. Loss detection event of two flavors:
+  *	A. Scoreboard estimator decided the packet is lost.
+  *	   A'. Reno "three dupacks" marks head of queue lost.
+- *	   A''. Its FACK modification, head until snd.fack is lost.
+  *	B. SACK arrives sacking SND.NXT at the moment, when the
+  *	   segment was retransmitted.
+  * 4. D-SACK added new rule: D-SACK changes any tag to S.
+@@ -1248,7 +1232,7 @@ static u8 tcp_sacktag_one(struct sock *sk,
+ 		fack_count += pcount;
+ 
+ 		/* Lost marker hint past SACKed? Tweak RFC3517 cnt */
+-		if (!tcp_is_fack(tp) && tp->lost_skb_hint &&
++		if (tp->lost_skb_hint &&
+ 		    before(start_seq, TCP_SKB_CB(tp->lost_skb_hint)->seq))
+ 			tp->lost_cnt_hint += pcount;
+ 
+@@ -2051,10 +2035,6 @@ static inline int tcp_fackets_out(const struct tcp_sock *tp)
+  * counter when SACK is enabled (without SACK, sacked_out is used for
+  * that purpose).
+  *
+- * Instead, with FACK TCP uses fackets_out that includes both SACKed
+- * segments up to the highest received SACK block so far and holes in
+- * between them.
+- *
+  * With reordering, holes may still be in flight, so RFC3517 recovery
+  * uses pure sacked_out (total number of SACKed segments) even though
+  * it violates the RFC that uses duplicate ACKs, often these are equal
+@@ -2064,10 +2044,10 @@ static inline int tcp_fackets_out(const struct tcp_sock *tp)
+  */
+ static inline int tcp_dupack_heuristics(const struct tcp_sock *tp)
+ {
+-	return tcp_is_fack(tp) ? tp->fackets_out : tp->sacked_out + 1;
++	return tp->sacked_out + 1;
+ }
+ 
+-/* Linux NewReno/SACK/FACK/ECN state machine.
++/* Linux NewReno/SACK/ECN state machine.
+  * --------------------------------------
+  *
+  * "Open"	Normal state, no dubious events, fast path.
+@@ -2132,16 +2112,6 @@ static inline int tcp_dupack_heuristics(const struct tcp_sock *tp)
+  *		dynamically measured and adjusted. This is implemented in
+  *		tcp_rack_mark_lost.
+  *
+- *		FACK (Disabled by default. Subsumbed by RACK):
+- *		It is the simplest heuristics. As soon as we decided
+- *		that something is lost, we decide that _all_ not SACKed
+- *		packets until the most forward SACK are lost. I.e.
+- *		lost_out = fackets_out - sacked_out and left_out = fackets_out.
+- *		It is absolutely correct estimate, if network does not reorder
+- *		packets. And it loses any connection to reality when reordering
+- *		takes place. We use FACK by default until reordering
+- *		is suspected on the path to this destination.
+- *
+  *		If the receiver does not support SACK:
+  *
+  *		NewReno (RFC6582): in Recovery we assume that one segment
+@@ -2190,7 +2160,7 @@ static bool tcp_time_to_recover(struct sock *sk, int flag)
+ }
+ 
+ /* Detect loss in event "A" above by marking head of queue up as lost.
+- * For FACK or non-SACK(Reno) senders, the first "packets" number of segments
++ * For non-SACK(Reno) senders, the first "packets" number of segments
+  * are considered lost. For RFC3517 SACK, a segment is considered lost if it
+  * has at least tp->reordering SACKed seqments above it; "packets" refers to
+  * the maximum SACKed segments to pass before reaching this limit.
+@@ -2226,12 +2196,12 @@ static void tcp_mark_head_lost(struct sock *sk, int packets, int mark_head)
+ 			break;
+ 
+ 		oldcnt = cnt;
+-		if (tcp_is_fack(tp) || tcp_is_reno(tp) ||
++		if (tcp_is_reno(tp) ||
+ 		    (TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_ACKED))
+ 			cnt += tcp_skb_pcount(skb);
+ 
+ 		if (cnt > packets) {
+-			if ((tcp_is_sack(tp) && !tcp_is_fack(tp)) ||
++			if (tcp_is_sack(tp) ||
+ 			    (TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_ACKED) ||
+ 			    (oldcnt >= packets))
+ 				break;
+@@ -2262,11 +2232,6 @@ static void tcp_update_scoreboard(struct sock *sk, int fast_rexmit)
+ 
+ 	if (tcp_is_reno(tp)) {
+ 		tcp_mark_head_lost(sk, 1, 1);
+-	} else if (tcp_is_fack(tp)) {
+-		int lost = tp->fackets_out - tp->reordering;
+-		if (lost <= 0)
+-			lost = 1;
+-		tcp_mark_head_lost(sk, lost, 0);
+ 	} else {
+ 		int sacked_upto = tp->sacked_out - tp->reordering;
+ 		if (sacked_upto >= 0)
+@@ -3199,8 +3164,7 @@ static int tcp_clean_rtx_queue(struct sock *sk, int prior_fackets,
+ 			if (reord < prior_fackets && reord <= tp->fackets_out)
+ 				tcp_update_reordering(sk, tp->fackets_out - reord, 0);
+ 
+-			delta = tcp_is_fack(tp) ? pkts_acked :
+-						  prior_sacked - tp->sacked_out;
++			delta = prior_sacked - tp->sacked_out;
+ 			tp->lost_cnt_hint -= min(tp->lost_cnt_hint, delta);
+ 		}
+ 
+@@ -5708,9 +5672,6 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
+ 			tp->tcp_header_len = sizeof(struct tcphdr);
+ 		}
+ 
+-		if (tcp_is_sack(tp) && sock_net(sk)->ipv4.sysctl_tcp_fack)
+-			tcp_enable_fack(tp);
+-
+ 		tcp_sync_mss(sk, icsk->icsk_pmtu_cookie);
+ 		tcp_initialize_rcv_mss(sk);
+ 
+diff --git a/net/ipv4/tcp_metrics.c b/net/ipv4/tcp_metrics.c
+index 9d5ddebfd831..7097f92d16e5 100644
+--- a/net/ipv4/tcp_metrics.c
++++ b/net/ipv4/tcp_metrics.c
+@@ -470,10 +470,8 @@ void tcp_init_metrics(struct sock *sk)
+ 		tp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
+ 	}
+ 	val = tcp_metric_get(tm, TCP_METRIC_REORDERING);
+-	if (val && tp->reordering != val) {
+-		tcp_disable_fack(tp);
++	if (val && tp->reordering != val)
+ 		tp->reordering = val;
+-	}
+ 
+ 	crtt = tcp_metric_get(tm, TCP_METRIC_RTT);
+ 	rcu_read_unlock();
+diff --git a/net/ipv4/tcp_minisocks.c b/net/ipv4/tcp_minisocks.c
+index 4bb86580decd..326c9282bf94 100644
+--- a/net/ipv4/tcp_minisocks.c
++++ b/net/ipv4/tcp_minisocks.c
+@@ -509,10 +509,7 @@ struct sock *tcp_create_openreq_child(const struct sock *sk,
+ 						       keepalive_time_when(newtp));
+ 
+ 		newtp->rx_opt.tstamp_ok = ireq->tstamp_ok;
+-		if ((newtp->rx_opt.sack_ok = ireq->sack_ok) != 0) {
+-			if (sock_net(sk)->ipv4.sysctl_tcp_fack)
+-				tcp_enable_fack(newtp);
+-		}
++		newtp->rx_opt.sack_ok = ireq->sack_ok;
+ 		newtp->window_clamp = req->rsk_window_clamp;
+ 		newtp->rcv_ssthresh = req->rsk_rcv_wnd;
+ 		newtp->rcv_wnd = req->rsk_rcv_wnd;
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 9b98d35aa0d8..094c429b4401 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -1257,7 +1257,7 @@ static void tcp_adjust_pcount(struct sock *sk, const struct sk_buff *skb, int de
+ 
+ 	if (tp->lost_skb_hint &&
+ 	    before(TCP_SKB_CB(skb)->seq, TCP_SKB_CB(tp->lost_skb_hint)->seq) &&
+-	    (tcp_is_fack(tp) || (TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_ACKED)))
++	    (TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_ACKED))
+ 		tp->lost_cnt_hint -= decr;
+ 
+ 	tcp_verify_left_out(tp);
+@@ -2961,9 +2961,6 @@ int tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb, int segs)
+  * retransmitted data is acknowledged.  It tries to continue
+  * resending the rest of the retransmit queue, until either
+  * we've sent it all or the congestion window limit is reached.
+- * If doing SACK, the first ACK which comes back for a timeout
+- * based retransmit packet might feed us FACK information again.
+- * If so, we use it to avoid unnecessarily retransmissions.
+  */
+ void tcp_xmit_retransmit_queue(struct sock *sk)
+ {

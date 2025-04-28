@@ -1,0 +1,100 @@
+commit 56ab6b93007e5000a8812985aec1833c4a6a9ce0
+Author: Haishuang Yan <yanhaishuang@cmss.chinamobile.com>
+Date:   Sun Dec 25 14:33:16 2016 +0800
+
+    ipv4: Namespaceify tcp_tw_reuse knob
+    
+    Different namespaces might have different requirements to reuse
+    TIME-WAIT sockets for new connections. This might be required in
+    cases where different namespace applications are in place which
+    require TIME_WAIT socket connections to be reduced independently
+    of the host.
+    
+    Signed-off-by: Haishuang Yan <yanhaishuang@cmss.chinamobile.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/netns/ipv4.h b/include/net/netns/ipv4.h
+index f0cf5a1b777e..0378e88f6fd3 100644
+--- a/include/net/netns/ipv4.h
++++ b/include/net/netns/ipv4.h
+@@ -110,6 +110,7 @@ struct netns_ipv4 {
+ 	int sysctl_tcp_orphan_retries;
+ 	int sysctl_tcp_fin_timeout;
+ 	unsigned int sysctl_tcp_notsent_lowat;
++	int sysctl_tcp_tw_reuse;
+ 
+ 	int sysctl_igmp_max_memberships;
+ 	int sysctl_igmp_max_msf;
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 207147b4c6b2..6061963cca98 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -252,7 +252,6 @@ extern int sysctl_tcp_wmem[3];
+ extern int sysctl_tcp_rmem[3];
+ extern int sysctl_tcp_app_win;
+ extern int sysctl_tcp_adv_win_scale;
+-extern int sysctl_tcp_tw_reuse;
+ extern int sysctl_tcp_frto;
+ extern int sysctl_tcp_low_latency;
+ extern int sysctl_tcp_nometrics_save;
+diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
+index 80bc36b25de2..22cbd61079b5 100644
+--- a/net/ipv4/sysctl_net_ipv4.c
++++ b/net/ipv4/sysctl_net_ipv4.c
+@@ -432,13 +432,6 @@ static struct ctl_table ipv4_table[] = {
+ 		.extra1		= &tcp_adv_win_scale_min,
+ 		.extra2		= &tcp_adv_win_scale_max,
+ 	},
+-	{
+-		.procname	= "tcp_tw_reuse",
+-		.data		= &sysctl_tcp_tw_reuse,
+-		.maxlen		= sizeof(int),
+-		.mode		= 0644,
+-		.proc_handler	= proc_dointvec
+-	},
+ 	{
+ 		.procname	= "tcp_frto",
+ 		.data		= &sysctl_tcp_frto,
+@@ -960,6 +953,13 @@ static struct ctl_table ipv4_net_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec,
+ 	},
++	{
++		.procname	= "tcp_tw_reuse",
++		.data		= &init_net.ipv4.sysctl_tcp_tw_reuse,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec
++	},
+ #ifdef CONFIG_IP_ROUTE_MULTIPATH
+ 	{
+ 		.procname	= "fib_multipath_use_neigh",
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 30d81f533ada..fe9da4fb96bf 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -84,7 +84,6 @@
+ #include <crypto/hash.h>
+ #include <linux/scatterlist.h>
+ 
+-int sysctl_tcp_tw_reuse __read_mostly;
+ int sysctl_tcp_low_latency __read_mostly;
+ 
+ #ifdef CONFIG_TCP_MD5SIG
+@@ -120,7 +119,7 @@ int tcp_twsk_unique(struct sock *sk, struct sock *sktw, void *twp)
+ 	   and use initial timestamp retrieved from peer table.
+ 	 */
+ 	if (tcptw->tw_ts_recent_stamp &&
+-	    (!twp || (sysctl_tcp_tw_reuse &&
++	    (!twp || (sock_net(sk)->ipv4.sysctl_tcp_tw_reuse &&
+ 			     get_seconds() - tcptw->tw_ts_recent_stamp > 1))) {
+ 		tp->write_seq = tcptw->tw_snd_nxt + 65535 + 2;
+ 		if (tp->write_seq == 0)
+@@ -2456,6 +2455,7 @@ static int __net_init tcp_sk_init(struct net *net)
+ 	net->ipv4.sysctl_tcp_orphan_retries = 0;
+ 	net->ipv4.sysctl_tcp_fin_timeout = TCP_FIN_TIMEOUT;
+ 	net->ipv4.sysctl_tcp_notsent_lowat = UINT_MAX;
++	net->ipv4.sysctl_tcp_tw_reuse = 0;
+ 
+ 	return 0;
+ fail:

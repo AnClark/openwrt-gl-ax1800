@@ -1,0 +1,112 @@
+commit 0bc65a28ae2aeb14aab7f4a930e0d8cf4cad9dc4
+Author: Eric Dumazet <edumazet@google.com>
+Date:   Thu Oct 26 21:55:04 2017 -0700
+
+    tcp: Namespace-ify sysctl_tcp_fack
+    
+    Signed-off-by: Eric Dumazet <edumazet@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/netns/ipv4.h b/include/net/netns/ipv4.h
+index 3875fdf6b186..f0e792beeea9 100644
+--- a/include/net/netns/ipv4.h
++++ b/include/net/netns/ipv4.h
+@@ -136,6 +136,7 @@ struct netns_ipv4 {
+ 	int sysctl_tcp_stdurg;
+ 	int sysctl_tcp_rfc1337;
+ 	int sysctl_tcp_abort_on_overflow;
++	int sysctl_tcp_fack;
+ 	struct inet_timewait_death_row tcp_death_row;
+ 	int sysctl_max_syn_backlog;
+ 	int sysctl_tcp_fastopen;
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 7331281a2292..e7b15e9f6e28 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -244,7 +244,6 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
+ 
+ /* sysctl variables for tcp */
+ extern int sysctl_tcp_max_orphans;
+-extern int sysctl_tcp_fack;
+ extern int sysctl_tcp_reordering;
+ extern int sysctl_tcp_max_reordering;
+ extern int sysctl_tcp_dsack;
+diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
+index ffd1fd769bba..1f23be13ce7b 100644
+--- a/net/ipv4/sysctl_net_ipv4.c
++++ b/net/ipv4/sysctl_net_ipv4.c
+@@ -414,13 +414,6 @@ static struct ctl_table ipv4_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec_jiffies,
+ 	},
+-	{
+-		.procname	= "tcp_fack",
+-		.data		= &sysctl_tcp_fack,
+-		.maxlen		= sizeof(int),
+-		.mode		= 0644,
+-		.proc_handler	= proc_dointvec
+-	},
+ 	{
+ 		.procname	= "tcp_max_reordering",
+ 		.data		= &sysctl_tcp_max_reordering,
+@@ -1145,6 +1138,13 @@ static struct ctl_table ipv4_net_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec
+ 	},
++	{
++		.procname	= "tcp_fack",
++		.data		= &init_net.ipv4.sysctl_tcp_fack,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec
++	},
+ 	{ }
+ };
+ 
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index f6e1c00e300e..c7c983f0f817 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -2517,7 +2517,7 @@ static int tcp_repair_options_est(struct sock *sk,
+ 				return -EINVAL;
+ 
+ 			tp->rx_opt.sack_ok |= TCP_SACK_SEEN;
+-			if (sysctl_tcp_fack)
++			if (sock_net(sk)->ipv4.sysctl_tcp_fack)
+ 				tcp_enable_fack(tp);
+ 			break;
+ 		case TCPOPT_TIMESTAMP:
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 64fde81b0eb7..c5b94460793f 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -79,7 +79,6 @@
+ #include <linux/unaligned/access_ok.h>
+ #include <linux/static_key.h>
+ 
+-int sysctl_tcp_fack __read_mostly;
+ int sysctl_tcp_max_reordering __read_mostly = 300;
+ int sysctl_tcp_dsack __read_mostly = 1;
+ int sysctl_tcp_app_win __read_mostly = 31;
+@@ -5720,7 +5719,7 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
+ 			tp->tcp_header_len = sizeof(struct tcphdr);
+ 		}
+ 
+-		if (tcp_is_sack(tp) && sysctl_tcp_fack)
++		if (tcp_is_sack(tp) && sock_net(sk)->ipv4.sysctl_tcp_fack)
+ 			tcp_enable_fack(tp);
+ 
+ 		tcp_sync_mss(sk, icsk->icsk_pmtu_cookie);
+diff --git a/net/ipv4/tcp_minisocks.c b/net/ipv4/tcp_minisocks.c
+index 3674d63170b2..3270ab8416ce 100644
+--- a/net/ipv4/tcp_minisocks.c
++++ b/net/ipv4/tcp_minisocks.c
+@@ -510,7 +510,7 @@ struct sock *tcp_create_openreq_child(const struct sock *sk,
+ 
+ 		newtp->rx_opt.tstamp_ok = ireq->tstamp_ok;
+ 		if ((newtp->rx_opt.sack_ok = ireq->sack_ok) != 0) {
+-			if (sysctl_tcp_fack)
++			if (sock_net(sk)->ipv4.sysctl_tcp_fack)
+ 				tcp_enable_fack(newtp);
+ 		}
+ 		newtp->window_clamp = req->rsk_window_clamp;

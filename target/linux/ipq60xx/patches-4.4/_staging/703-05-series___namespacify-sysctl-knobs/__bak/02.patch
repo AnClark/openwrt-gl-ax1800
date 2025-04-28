@@ -1,0 +1,130 @@
+commit 7c083ecb3ba4583a625d5ff9655d1a819e374493
+Author: Nikolay Borisov <kernel@kyup.com>
+Date:   Wed Feb 3 09:46:50 2016 +0200
+
+    ipv4: Namespaceify tcp synack retries sysctl knob
+    
+    Signed-off-by: Nikolay Borisov <kernel@kyup.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/netns/ipv4.h b/include/net/netns/ipv4.h
+index b7b5bd64df35..9e83084ab8c1 100644
+--- a/include/net/netns/ipv4.h
++++ b/include/net/netns/ipv4.h
+@@ -99,6 +99,7 @@ struct netns_ipv4 {
+ 	int sysctl_tcp_keepalive_intvl;
+ 
+ 	int sysctl_tcp_syn_retries;
++	int sysctl_tcp_synack_retries;
+ 
+ 	struct ping_group_range ping_group_range;
+ 
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 825485c7cc1a..05659e860039 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -240,7 +240,6 @@ extern int sysctl_tcp_timestamps;
+ extern int sysctl_tcp_window_scaling;
+ extern int sysctl_tcp_sack;
+ extern int sysctl_tcp_fin_timeout;
+-extern int sysctl_tcp_synack_retries;
+ extern int sysctl_tcp_retries1;
+ extern int sysctl_tcp_retries2;
+ extern int sysctl_tcp_orphan_retries;
+diff --git a/net/ipv4/inet_connection_sock.c b/net/ipv4/inet_connection_sock.c
+index 46b9c887bede..9b17c1792dce 100644
+--- a/net/ipv4/inet_connection_sock.c
++++ b/net/ipv4/inet_connection_sock.c
+@@ -482,10 +482,6 @@ EXPORT_SYMBOL_GPL(inet_csk_route_child_sock);
+ #define AF_INET_FAMILY(fam) true
+ #endif
+ 
+-/* Only thing we need from tcp.h */
+-extern int sysctl_tcp_synack_retries;
+-
+-
+ /* Decide when to expire the request and when to resend SYN-ACK */
+ static inline void syn_ack_recalc(struct request_sock *req, const int thresh,
+ 				  const int max_retries,
+@@ -557,6 +553,7 @@ static void reqsk_timer_handler(unsigned long data)
+ {
+ 	struct request_sock *req = (struct request_sock *)data;
+ 	struct sock *sk_listener = req->rsk_listener;
++	struct net *net = sock_net(sk_listener);
+ 	struct inet_connection_sock *icsk = inet_csk(sk_listener);
+ 	struct request_sock_queue *queue = &icsk->icsk_accept_queue;
+ 	int qlen, expire = 0, resend = 0;
+@@ -566,7 +563,7 @@ static void reqsk_timer_handler(unsigned long data)
+ 	if (sk_state_load(sk_listener) != TCP_LISTEN)
+ 		goto drop;
+ 
+-	max_retries = icsk->icsk_syn_retries ? : sysctl_tcp_synack_retries;
++	max_retries = icsk->icsk_syn_retries ? : net->ipv4.sysctl_tcp_synack_retries;
+ 	thresh = max_retries;
+ 	/* Normally all the openreqs are young and become mature
+ 	 * (i.e. converted to established socket) for first timeout.
+diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
+index ae9dd8823134..bb682e36d8b7 100644
+--- a/net/ipv4/sysctl_net_ipv4.c
++++ b/net/ipv4/sysctl_net_ipv4.c
+@@ -291,13 +291,6 @@ static struct ctl_table ipv4_table[] = {
+ 		.extra1		= &ip_ttl_min,
+ 		.extra2		= &ip_ttl_max,
+ 	},
+-	{
+-		.procname	= "tcp_synack_retries",
+-		.data		= &sysctl_tcp_synack_retries,
+-		.maxlen		= sizeof(int),
+-		.mode		= 0644,
+-		.proc_handler	= proc_dointvec
+-	},
+ 	{
+ 		.procname	= "tcp_max_orphans",
+ 		.data		= &sysctl_tcp_max_orphans,
+@@ -960,6 +953,13 @@ static struct ctl_table ipv4_net_table[] = {
+ 		.extra1		= &tcp_syn_retries_min,
+ 		.extra2		= &tcp_syn_retries_max
+ 	},
++	{
++		.procname	= "tcp_synack_retries",
++		.data		= &init_net.ipv4.sysctl_tcp_synack_retries,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec
++	},
+ 	{ }
+ };
+ 
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index f7464852aaa1..3146279695b9 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -2389,6 +2389,7 @@ static int __net_init tcp_sk_init(struct net *net)
+ 	net->ipv4.sysctl_tcp_keepalive_intvl = TCP_KEEPALIVE_INTVL;
+ 
+ 	net->ipv4.sysctl_tcp_syn_retries = TCP_SYN_RETRIES;
++	net->ipv4.sysctl_tcp_synack_retries = TCP_SYNACK_RETRIES;
+ 
+ 	return 0;
+ fail:
+diff --git a/net/ipv4/tcp_timer.c b/net/ipv4/tcp_timer.c
+index c5d51f530c65..ca25fdf0c525 100644
+--- a/net/ipv4/tcp_timer.c
++++ b/net/ipv4/tcp_timer.c
+@@ -22,7 +22,6 @@
+ #include <linux/gfp.h>
+ #include <net/tcp.h>
+ 
+-int sysctl_tcp_synack_retries __read_mostly = TCP_SYNACK_RETRIES;
+ int sysctl_tcp_retries1 __read_mostly = TCP_RETR1;
+ int sysctl_tcp_retries2 __read_mostly = TCP_RETR2;
+ int sysctl_tcp_orphan_retries __read_mostly;
+@@ -332,7 +331,7 @@ static void tcp_fastopen_synack_timer(struct sock *sk)
+ {
+ 	struct inet_connection_sock *icsk = inet_csk(sk);
+ 	int max_retries = icsk->icsk_syn_retries ? :
+-	    sysctl_tcp_synack_retries + 1; /* add one more retry for fastopen */
++	    sock_net(sk)->ipv4.sysctl_tcp_synack_retries + 1; /* add one more retry for fastopen */
+ 	struct request_sock *req;
+ 
+ 	req = tcp_sk(sk)->fastopen_rsk;

@@ -1,0 +1,1211 @@
+commit 02a1d6e7a6bb025a77da77012190e1efc1970f1c
+Author: Eric Dumazet <edumazet@google.com>
+Date:   Wed Apr 27 16:44:39 2016 -0700
+
+    net: rename NET_{ADD|INC}_STATS_BH()
+    
+    Rename NET_INC_STATS_BH() to __NET_INC_STATS()
+    and NET_ADD_STATS_BH() to __NET_ADD_STATS()
+    
+    Signed-off-by: Eric Dumazet <edumazet@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/ip.h b/include/net/ip.h
+index 55f5de50a564..fb3b766ca1c7 100644
+--- a/include/net/ip.h
++++ b/include/net/ip.h
+@@ -193,9 +193,9 @@ void ip_send_unicast_reply(struct sock *sk, struct sk_buff *skb,
+ #define IP_UPD_PO_STATS(net, field, val) SNMP_UPD_PO_STATS64((net)->mib.ip_statistics, field, val)
+ #define __IP_UPD_PO_STATS(net, field, val) SNMP_UPD_PO_STATS64_BH((net)->mib.ip_statistics, field, val)
+ #define NET_INC_STATS(net, field)	SNMP_INC_STATS((net)->mib.net_statistics, field)
+-#define NET_INC_STATS_BH(net, field)	SNMP_INC_STATS_BH((net)->mib.net_statistics, field)
++#define __NET_INC_STATS(net, field)	SNMP_INC_STATS_BH((net)->mib.net_statistics, field)
+ #define NET_ADD_STATS(net, field, adnd)	SNMP_ADD_STATS((net)->mib.net_statistics, field, adnd)
+-#define NET_ADD_STATS_BH(net, field, adnd) SNMP_ADD_STATS_BH((net)->mib.net_statistics, field, adnd)
++#define __NET_ADD_STATS(net, field, adnd) SNMP_ADD_STATS_BH((net)->mib.net_statistics, field, adnd)
+ 
+ u64 snmp_get_cpu_field(void __percpu *mib, int cpu, int offct);
+ unsigned long snmp_fold_field(void __percpu *mib, int offt);
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 939ebd5320a9..ff8b4265cb2b 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -1743,7 +1743,7 @@ static inline __u32 cookie_init_sequence(const struct tcp_request_sock_ops *ops,
+ 					 __u16 *mss)
+ {
+ 	tcp_synq_overflow(sk);
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_SYNCOOKIESSENT);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_SYNCOOKIESSENT);
+ 	return ops->cookie_init_seq(skb, mss);
+ }
+ #else
+@@ -1852,7 +1852,7 @@ static inline void tcp_segs_in(struct tcp_sock *tp, const struct sk_buff *skb)
+ static inline void tcp_listendrop(const struct sock *sk)
+ {
+ 	atomic_inc(&((struct sock *)sk)->sk_drops);
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENDROPS);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_LISTENDROPS);
+ }
+ 
+ #endif	/* _TCP_H */
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 6324bc9267f7..e96a3bc2c634 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -4982,8 +4982,8 @@ bool sk_busy_loop(struct sock *sk, int nonblock)
+ 			netpoll_poll_unlock(have);
+ 		}
+ 		if (rc > 0)
+-			NET_ADD_STATS_BH(sock_net(sk),
+-					 LINUX_MIB_BUSYPOLLRXPACKETS, rc);
++			__NET_ADD_STATS(sock_net(sk),
++					LINUX_MIB_BUSYPOLLRXPACKETS, rc);
+ 		local_bh_enable();
+ 
+ 		if (rc == LL_FLUSH_FAILED)
+diff --git a/net/dccp/ipv4.c b/net/dccp/ipv4.c
+index a9c75e79ba99..a8164272e0f4 100644
+--- a/net/dccp/ipv4.c
++++ b/net/dccp/ipv4.c
+@@ -205,7 +205,7 @@ void dccp_req_err(struct sock *sk, u64 seq)
+ 	 * socket here.
+ 	 */
+ 	if (!between48(seq, dccp_rsk(req)->dreq_iss, dccp_rsk(req)->dreq_gss)) {
+-		NET_INC_STATS_BH(net, LINUX_MIB_OUTOFWINDOWICMPS);
++		__NET_INC_STATS(net, LINUX_MIB_OUTOFWINDOWICMPS);
+ 	} else {
+ 		/*
+ 		 * Still in RESPOND, just remove it silently.
+@@ -273,7 +273,7 @@ static void dccp_v4_err(struct sk_buff *skb, u32 info)
+ 	 * servers this needs to be solved differently.
+ 	 */
+ 	if (sock_owned_by_user(sk))
+-		NET_INC_STATS_BH(net, LINUX_MIB_LOCKDROPPEDICMPS);
++		__NET_INC_STATS(net, LINUX_MIB_LOCKDROPPEDICMPS);
+ 
+ 	if (sk->sk_state == DCCP_CLOSED)
+ 		goto out;
+@@ -281,7 +281,7 @@ static void dccp_v4_err(struct sk_buff *skb, u32 info)
+ 	dp = dccp_sk(sk);
+ 	if ((1 << sk->sk_state) & ~(DCCPF_REQUESTING | DCCPF_LISTEN) &&
+ 	    !between48(seq, dp->dccps_awl, dp->dccps_awh)) {
+-		NET_INC_STATS_BH(net, LINUX_MIB_OUTOFWINDOWICMPS);
++		__NET_INC_STATS(net, LINUX_MIB_OUTOFWINDOWICMPS);
+ 		goto out;
+ 	}
+ 
+@@ -431,11 +431,11 @@ struct sock *dccp_v4_request_recv_sock(const struct sock *sk,
+ 	return newsk;
+ 
+ exit_overflow:
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
+ exit_nonewsk:
+ 	dst_release(dst);
+ exit:
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENDROPS);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_LISTENDROPS);
+ 	return NULL;
+ put_and_exit:
+ 	inet_csk_prepare_forced_close(newsk);
+diff --git a/net/dccp/ipv6.c b/net/dccp/ipv6.c
+index 323c6b595e31..0f4eb4ea57a5 100644
+--- a/net/dccp/ipv6.c
++++ b/net/dccp/ipv6.c
+@@ -106,7 +106,7 @@ static void dccp_v6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 
+ 	bh_lock_sock(sk);
+ 	if (sock_owned_by_user(sk))
+-		NET_INC_STATS_BH(net, LINUX_MIB_LOCKDROPPEDICMPS);
++		__NET_INC_STATS(net, LINUX_MIB_LOCKDROPPEDICMPS);
+ 
+ 	if (sk->sk_state == DCCP_CLOSED)
+ 		goto out;
+@@ -114,7 +114,7 @@ static void dccp_v6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 	dp = dccp_sk(sk);
+ 	if ((1 << sk->sk_state) & ~(DCCPF_REQUESTING | DCCPF_LISTEN) &&
+ 	    !between48(seq, dp->dccps_awl, dp->dccps_awh)) {
+-		NET_INC_STATS_BH(net, LINUX_MIB_OUTOFWINDOWICMPS);
++		__NET_INC_STATS(net, LINUX_MIB_OUTOFWINDOWICMPS);
+ 		goto out;
+ 	}
+ 
+@@ -527,11 +527,11 @@ static struct sock *dccp_v6_request_recv_sock(const struct sock *sk,
+ 	return newsk;
+ 
+ out_overflow:
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
+ out_nonewsk:
+ 	dst_release(dst);
+ out:
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENDROPS);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_LISTENDROPS);
+ 	return NULL;
+ }
+ 
+diff --git a/net/dccp/timer.c b/net/dccp/timer.c
+index 4ff22c24ff14..3a2c34027758 100644
+--- a/net/dccp/timer.c
++++ b/net/dccp/timer.c
+@@ -179,7 +179,7 @@ static void dccp_delack_timer(unsigned long data)
+ 	if (sock_owned_by_user(sk)) {
+ 		/* Try again later. */
+ 		icsk->icsk_ack.blocked = 1;
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);
+ 		sk_reset_timer(sk, &icsk->icsk_delack_timer,
+ 			       jiffies + TCP_DELACK_MIN);
+ 		goto out;
+@@ -209,7 +209,7 @@ static void dccp_delack_timer(unsigned long data)
+ 			icsk->icsk_ack.ato = TCP_ATO_MIN;
+ 		}
+ 		dccp_send_ack(sk);
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKS);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKS);
+ 	}
+ out:
+ 	bh_unlock_sock(sk);
+diff --git a/net/ipv4/arp.c b/net/ipv4/arp.c
+index c34c7544d1db..89a8cac4726a 100644
+--- a/net/ipv4/arp.c
++++ b/net/ipv4/arp.c
+@@ -436,7 +436,7 @@ static int arp_filter(__be32 sip, __be32 tip, struct net_device *dev)
+ 	if (IS_ERR(rt))
+ 		return 1;
+ 	if (rt->dst.dev != dev) {
+-		NET_INC_STATS_BH(net, LINUX_MIB_ARPFILTER);
++		__NET_INC_STATS(net, LINUX_MIB_ARPFILTER);
+ 		flag = 1;
+ 	}
+ 	ip_rt_put(rt);
+diff --git a/net/ipv4/inet_hashtables.c b/net/ipv4/inet_hashtables.c
+index b76b0d7e59c1..3177211ab651 100644
+--- a/net/ipv4/inet_hashtables.c
++++ b/net/ipv4/inet_hashtables.c
+@@ -360,7 +360,7 @@ static int __inet_check_established(struct inet_timewait_death_row *death_row,
+ 	__sk_nulls_add_node_rcu(sk, &head->chain);
+ 	if (tw) {
+ 		sk_nulls_del_node_init_rcu((struct sock *)tw);
+-		NET_INC_STATS_BH(net, LINUX_MIB_TIMEWAITRECYCLED);
++		__NET_INC_STATS(net, LINUX_MIB_TIMEWAITRECYCLED);
+ 	}
+ 	spin_unlock(lock);
+ 	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
+diff --git a/net/ipv4/inet_timewait_sock.c b/net/ipv4/inet_timewait_sock.c
+index c67f9bd7699c..99ee5c4a9b68 100644
+--- a/net/ipv4/inet_timewait_sock.c
++++ b/net/ipv4/inet_timewait_sock.c
+@@ -147,9 +147,9 @@ static void tw_timer_handler(unsigned long data)
+ 	struct inet_timewait_sock *tw = (struct inet_timewait_sock *)data;
+ 
+ 	if (tw->tw_kill)
+-		NET_INC_STATS_BH(twsk_net(tw), LINUX_MIB_TIMEWAITKILLED);
++		__NET_INC_STATS(twsk_net(tw), LINUX_MIB_TIMEWAITKILLED);
+ 	else
+-		NET_INC_STATS_BH(twsk_net(tw), LINUX_MIB_TIMEWAITED);
++		__NET_INC_STATS(twsk_net(tw), LINUX_MIB_TIMEWAITED);
+ 	inet_twsk_kill(tw);
+ }
+ 
+diff --git a/net/ipv4/ip_input.c b/net/ipv4/ip_input.c
+index 8fda63d78435..751c0658e194 100644
+--- a/net/ipv4/ip_input.c
++++ b/net/ipv4/ip_input.c
+@@ -337,7 +337,7 @@ static int ip_rcv_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
+ 					       iph->tos, skb->dev);
+ 		if (unlikely(err)) {
+ 			if (err == -EXDEV)
+-				NET_INC_STATS_BH(net, LINUX_MIB_IPRPFILTER);
++				__NET_INC_STATS(net, LINUX_MIB_IPRPFILTER);
+ 			goto drop;
+ 		}
+ 	}
+diff --git a/net/ipv4/syncookies.c b/net/ipv4/syncookies.c
+index 4c04f09338e3..e3c4043c27de 100644
+--- a/net/ipv4/syncookies.c
++++ b/net/ipv4/syncookies.c
+@@ -312,11 +312,11 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb)
+ 
+ 	mss = __cookie_v4_check(ip_hdr(skb), th, cookie);
+ 	if (mss == 0) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_SYNCOOKIESFAILED);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_SYNCOOKIESFAILED);
+ 		goto out;
+ 	}
+ 
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_SYNCOOKIESRECV);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_SYNCOOKIESRECV);
+ 
+ 	/* check for timestamp cookie support */
+ 	memset(&tcp_opt, 0, sizeof(tcp_opt));
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 96833433c2c3..040f35e7efe0 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -2148,7 +2148,7 @@ void tcp_close(struct sock *sk, long timeout)
+ 		if (tp->linger2 < 0) {
+ 			tcp_set_state(sk, TCP_CLOSE);
+ 			tcp_send_active_reset(sk, GFP_ATOMIC);
+-			NET_INC_STATS_BH(sock_net(sk),
++			__NET_INC_STATS(sock_net(sk),
+ 					LINUX_MIB_TCPABORTONLINGER);
+ 		} else {
+ 			const int tmo = tcp_fin_time(sk);
+@@ -2167,7 +2167,7 @@ void tcp_close(struct sock *sk, long timeout)
+ 		if (tcp_check_oom(sk, 0)) {
+ 			tcp_set_state(sk, TCP_CLOSE);
+ 			tcp_send_active_reset(sk, GFP_ATOMIC);
+-			NET_INC_STATS_BH(sock_net(sk),
++			__NET_INC_STATS(sock_net(sk),
+ 					LINUX_MIB_TCPABORTONMEMORY);
+ 		}
+ 	}
+diff --git a/net/ipv4/tcp_cdg.c b/net/ipv4/tcp_cdg.c
+index 167b6a3e1b98..3c00208c37f4 100644
+--- a/net/ipv4/tcp_cdg.c
++++ b/net/ipv4/tcp_cdg.c
+@@ -155,11 +155,11 @@ static void tcp_cdg_hystart_update(struct sock *sk)
+ 
+ 			ca->last_ack = now_us;
+ 			if (after(now_us, ca->round_start + base_owd)) {
+-				NET_INC_STATS_BH(sock_net(sk),
+-						 LINUX_MIB_TCPHYSTARTTRAINDETECT);
+-				NET_ADD_STATS_BH(sock_net(sk),
+-						 LINUX_MIB_TCPHYSTARTTRAINCWND,
+-						 tp->snd_cwnd);
++				__NET_INC_STATS(sock_net(sk),
++						LINUX_MIB_TCPHYSTARTTRAINDETECT);
++				__NET_ADD_STATS(sock_net(sk),
++						LINUX_MIB_TCPHYSTARTTRAINCWND,
++						tp->snd_cwnd);
+ 				tp->snd_ssthresh = tp->snd_cwnd;
+ 				return;
+ 			}
+@@ -174,11 +174,11 @@ static void tcp_cdg_hystart_update(struct sock *sk)
+ 					 125U);
+ 
+ 			if (ca->rtt.min > thresh) {
+-				NET_INC_STATS_BH(sock_net(sk),
+-						 LINUX_MIB_TCPHYSTARTDELAYDETECT);
+-				NET_ADD_STATS_BH(sock_net(sk),
+-						 LINUX_MIB_TCPHYSTARTDELAYCWND,
+-						 tp->snd_cwnd);
++				__NET_INC_STATS(sock_net(sk),
++						LINUX_MIB_TCPHYSTARTDELAYDETECT);
++				__NET_ADD_STATS(sock_net(sk),
++						LINUX_MIB_TCPHYSTARTDELAYCWND,
++						tp->snd_cwnd);
+ 				tp->snd_ssthresh = tp->snd_cwnd;
+ 			}
+ 		}
+diff --git a/net/ipv4/tcp_cubic.c b/net/ipv4/tcp_cubic.c
+index 448c2615fece..59155af9de5d 100644
+--- a/net/ipv4/tcp_cubic.c
++++ b/net/ipv4/tcp_cubic.c
+@@ -402,11 +402,11 @@ static void hystart_update(struct sock *sk, u32 delay)
+ 			ca->last_ack = now;
+ 			if ((s32)(now - ca->round_start) > ca->delay_min >> 4) {
+ 				ca->found |= HYSTART_ACK_TRAIN;
+-				NET_INC_STATS_BH(sock_net(sk),
+-						 LINUX_MIB_TCPHYSTARTTRAINDETECT);
+-				NET_ADD_STATS_BH(sock_net(sk),
+-						 LINUX_MIB_TCPHYSTARTTRAINCWND,
+-						 tp->snd_cwnd);
++				__NET_INC_STATS(sock_net(sk),
++						LINUX_MIB_TCPHYSTARTTRAINDETECT);
++				__NET_ADD_STATS(sock_net(sk),
++						LINUX_MIB_TCPHYSTARTTRAINCWND,
++						tp->snd_cwnd);
+ 				tp->snd_ssthresh = tp->snd_cwnd;
+ 			}
+ 		}
+@@ -423,11 +423,11 @@ static void hystart_update(struct sock *sk, u32 delay)
+ 			if (ca->curr_rtt > ca->delay_min +
+ 			    HYSTART_DELAY_THRESH(ca->delay_min >> 3)) {
+ 				ca->found |= HYSTART_DELAY;
+-				NET_INC_STATS_BH(sock_net(sk),
+-						 LINUX_MIB_TCPHYSTARTDELAYDETECT);
+-				NET_ADD_STATS_BH(sock_net(sk),
+-						 LINUX_MIB_TCPHYSTARTDELAYCWND,
+-						 tp->snd_cwnd);
++				__NET_INC_STATS(sock_net(sk),
++						LINUX_MIB_TCPHYSTARTDELAYDETECT);
++				__NET_ADD_STATS(sock_net(sk),
++						LINUX_MIB_TCPHYSTARTDELAYCWND,
++						tp->snd_cwnd);
+ 				tp->snd_ssthresh = tp->snd_cwnd;
+ 			}
+ 		}
+diff --git a/net/ipv4/tcp_fastopen.c b/net/ipv4/tcp_fastopen.c
+index cffd8f9ed1a9..a1498d507e42 100644
+--- a/net/ipv4/tcp_fastopen.c
++++ b/net/ipv4/tcp_fastopen.c
+@@ -256,8 +256,8 @@ static bool tcp_fastopen_queue_check(struct sock *sk)
+ 		req1 = fastopenq->rskq_rst_head;
+ 		if (!req1 || time_after(req1->rsk_timer.expires, jiffies)) {
+ 			spin_unlock(&fastopenq->lock);
+-			NET_INC_STATS_BH(sock_net(sk),
+-					 LINUX_MIB_TCPFASTOPENLISTENOVERFLOW);
++			__NET_INC_STATS(sock_net(sk),
++					LINUX_MIB_TCPFASTOPENLISTENOVERFLOW);
+ 			return false;
+ 		}
+ 		fastopenq->rskq_rst_head = req1->dl_next;
+@@ -282,7 +282,7 @@ struct sock *tcp_try_fastopen(struct sock *sk, struct sk_buff *skb,
+ 	struct sock *child;
+ 
+ 	if (foc->len == 0) /* Client requests a cookie */
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPFASTOPENCOOKIEREQD);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPFASTOPENCOOKIEREQD);
+ 
+ 	if (!((sysctl_tcp_fastopen & TFO_SERVER_ENABLE) &&
+ 	      (syn_data || foc->len >= 0) &&
+@@ -311,13 +311,13 @@ struct sock *tcp_try_fastopen(struct sock *sk, struct sk_buff *skb,
+ 		child = tcp_fastopen_create_child(sk, skb, dst, req);
+ 		if (child) {
+ 			foc->len = -1;
+-			NET_INC_STATS_BH(sock_net(sk),
+-					 LINUX_MIB_TCPFASTOPENPASSIVE);
++			__NET_INC_STATS(sock_net(sk),
++					LINUX_MIB_TCPFASTOPENPASSIVE);
+ 			return child;
+ 		}
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPFASTOPENPASSIVEFAIL);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPFASTOPENPASSIVEFAIL);
+ 	} else if (foc->len > 0) /* Client presents an invalid cookie */
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPFASTOPENPASSIVEFAIL);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPFASTOPENPASSIVEFAIL);
+ 
+ 	valid_foc.exp = foc->exp;
+ 	*foc = valid_foc;
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index dad8d93262ed..0d5239c283cb 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -869,7 +869,7 @@ static void tcp_update_reordering(struct sock *sk, const int metric,
+ 		else
+ 			mib_idx = LINUX_MIB_TCPSACKREORDER;
+ 
+-		NET_INC_STATS_BH(sock_net(sk), mib_idx);
++		__NET_INC_STATS(sock_net(sk), mib_idx);
+ #if FASTRETRANS_DEBUG > 1
+ 		pr_debug("Disorder%d %d %u f%u s%u rr%d\n",
+ 			 tp->rx_opt.sack_ok, inet_csk(sk)->icsk_ca_state,
+@@ -1062,7 +1062,7 @@ static bool tcp_check_dsack(struct sock *sk, const struct sk_buff *ack_skb,
+ 	if (before(start_seq_0, TCP_SKB_CB(ack_skb)->ack_seq)) {
+ 		dup_sack = true;
+ 		tcp_dsack_seen(tp);
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPDSACKRECV);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPDSACKRECV);
+ 	} else if (num_sacks > 1) {
+ 		u32 end_seq_1 = get_unaligned_be32(&sp[1].end_seq);
+ 		u32 start_seq_1 = get_unaligned_be32(&sp[1].start_seq);
+@@ -1071,7 +1071,7 @@ static bool tcp_check_dsack(struct sock *sk, const struct sk_buff *ack_skb,
+ 		    !before(start_seq_0, start_seq_1)) {
+ 			dup_sack = true;
+ 			tcp_dsack_seen(tp);
+-			NET_INC_STATS_BH(sock_net(sk),
++			__NET_INC_STATS(sock_net(sk),
+ 					LINUX_MIB_TCPDSACKOFORECV);
+ 		}
+ 	}
+@@ -1289,7 +1289,7 @@ static bool tcp_shifted_skb(struct sock *sk, struct sk_buff *skb,
+ 
+ 	if (skb->len > 0) {
+ 		BUG_ON(!tcp_skb_pcount(skb));
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_SACKSHIFTED);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_SACKSHIFTED);
+ 		return false;
+ 	}
+ 
+@@ -1313,7 +1313,7 @@ static bool tcp_shifted_skb(struct sock *sk, struct sk_buff *skb,
+ 	tcp_unlink_write_queue(skb, sk);
+ 	sk_wmem_free_skb(sk, skb);
+ 
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_SACKMERGED);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_SACKMERGED);
+ 
+ 	return true;
+ }
+@@ -1469,7 +1469,7 @@ static struct sk_buff *tcp_shift_skb_data(struct sock *sk, struct sk_buff *skb,
+ 	return skb;
+ 
+ fallback:
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_SACKSHIFTFALLBACK);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_SACKSHIFTFALLBACK);
+ 	return NULL;
+ }
+ 
+@@ -1657,7 +1657,7 @@ tcp_sacktag_write_queue(struct sock *sk, const struct sk_buff *ack_skb,
+ 				mib_idx = LINUX_MIB_TCPSACKDISCARD;
+ 			}
+ 
+-			NET_INC_STATS_BH(sock_net(sk), mib_idx);
++			__NET_INC_STATS(sock_net(sk), mib_idx);
+ 			if (i == 0)
+ 				first_sack_index = -1;
+ 			continue;
+@@ -1909,7 +1909,7 @@ void tcp_enter_loss(struct sock *sk)
+ 	skb = tcp_write_queue_head(sk);
+ 	is_reneg = skb && (TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_ACKED);
+ 	if (is_reneg) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPSACKRENEGING);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPSACKRENEGING);
+ 		tp->sacked_out = 0;
+ 		tp->fackets_out = 0;
+ 	}
+@@ -2395,7 +2395,7 @@ static bool tcp_try_undo_recovery(struct sock *sk)
+ 		else
+ 			mib_idx = LINUX_MIB_TCPFULLUNDO;
+ 
+-		NET_INC_STATS_BH(sock_net(sk), mib_idx);
++		__NET_INC_STATS(sock_net(sk), mib_idx);
+ 	}
+ 	if (tp->snd_una == tp->high_seq && tcp_is_reno(tp)) {
+ 		/* Hold old state until something *above* high_seq
+@@ -2417,7 +2417,7 @@ static bool tcp_try_undo_dsack(struct sock *sk)
+ 	if (tp->undo_marker && !tp->undo_retrans) {
+ 		DBGUNDO(sk, "D-SACK");
+ 		tcp_undo_cwnd_reduction(sk, false);
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPDSACKUNDO);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPDSACKUNDO);
+ 		return true;
+ 	}
+ 	return false;
+@@ -2432,10 +2432,10 @@ static bool tcp_try_undo_loss(struct sock *sk, bool frto_undo)
+ 		tcp_undo_cwnd_reduction(sk, true);
+ 
+ 		DBGUNDO(sk, "partial loss");
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPLOSSUNDO);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPLOSSUNDO);
+ 		if (frto_undo)
+-			NET_INC_STATS_BH(sock_net(sk),
+-					 LINUX_MIB_TCPSPURIOUSRTOS);
++			__NET_INC_STATS(sock_net(sk),
++					LINUX_MIB_TCPSPURIOUSRTOS);
+ 		inet_csk(sk)->icsk_retransmits = 0;
+ 		if (frto_undo || tcp_is_sack(tp))
+ 			tcp_set_ca_state(sk, TCP_CA_Open);
+@@ -2559,7 +2559,7 @@ static void tcp_mtup_probe_failed(struct sock *sk)
+ 
+ 	icsk->icsk_mtup.search_high = icsk->icsk_mtup.probe_size - 1;
+ 	icsk->icsk_mtup.probe_size = 0;
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPMTUPFAIL);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMTUPFAIL);
+ }
+ 
+ static void tcp_mtup_probe_success(struct sock *sk)
+@@ -2579,7 +2579,7 @@ static void tcp_mtup_probe_success(struct sock *sk)
+ 	icsk->icsk_mtup.search_low = icsk->icsk_mtup.probe_size;
+ 	icsk->icsk_mtup.probe_size = 0;
+ 	tcp_sync_mss(sk, icsk->icsk_pmtu_cookie);
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPMTUPSUCCESS);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMTUPSUCCESS);
+ }
+ 
+ /* Do a simple retransmit without using the backoff mechanisms in
+@@ -2643,7 +2643,7 @@ static void tcp_enter_recovery(struct sock *sk, bool ece_ack)
+ 	else
+ 		mib_idx = LINUX_MIB_TCPSACKRECOVERY;
+ 
+-	NET_INC_STATS_BH(sock_net(sk), mib_idx);
++	__NET_INC_STATS(sock_net(sk), mib_idx);
+ 
+ 	tp->prior_ssthresh = 0;
+ 	tcp_init_undo(tp);
+@@ -2736,7 +2736,7 @@ static bool tcp_try_undo_partial(struct sock *sk, const int acked)
+ 
+ 		DBGUNDO(sk, "partial recovery");
+ 		tcp_undo_cwnd_reduction(sk, true);
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPPARTIALUNDO);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPPARTIALUNDO);
+ 		tcp_try_keep_open(sk);
+ 		return true;
+ 	}
+@@ -3431,7 +3431,7 @@ bool tcp_oow_rate_limited(struct net *net, const struct sk_buff *skb,
+ 		s32 elapsed = (s32)(tcp_time_stamp - *last_oow_ack_time);
+ 
+ 		if (0 <= elapsed && elapsed < sysctl_tcp_invalid_ratelimit) {
+-			NET_INC_STATS_BH(net, mib_idx);
++			__NET_INC_STATS(net, mib_idx);
+ 			return true;	/* rate-limited: don't send yet! */
+ 		}
+ 	}
+@@ -3464,7 +3464,7 @@ static void tcp_send_challenge_ack(struct sock *sk, const struct sk_buff *skb)
+ 		challenge_count = 0;
+ 	}
+ 	if (++challenge_count <= sysctl_tcp_challenge_ack_limit) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPCHALLENGEACK);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPCHALLENGEACK);
+ 		tcp_send_ack(sk);
+ 	}
+ }
+@@ -3513,8 +3513,8 @@ static void tcp_process_tlp_ack(struct sock *sk, u32 ack, int flag)
+ 		tcp_set_ca_state(sk, TCP_CA_CWR);
+ 		tcp_end_cwnd_reduction(sk);
+ 		tcp_try_keep_open(sk);
+-		NET_INC_STATS_BH(sock_net(sk),
+-				 LINUX_MIB_TCPLOSSPROBERECOVERY);
++		__NET_INC_STATS(sock_net(sk),
++				LINUX_MIB_TCPLOSSPROBERECOVERY);
+ 	} else if (!(flag & (FLAG_SND_UNA_ADVANCED |
+ 			     FLAG_NOT_DUP | FLAG_DATA_SACKED))) {
+ 		/* Pure dupack: original and TLP probe arrived; no loss */
+@@ -3618,14 +3618,14 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
+ 
+ 		tcp_in_ack_event(sk, CA_ACK_WIN_UPDATE);
+ 
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPHPACKS);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPHPACKS);
+ 	} else {
+ 		u32 ack_ev_flags = CA_ACK_SLOWPATH;
+ 
+ 		if (ack_seq != TCP_SKB_CB(skb)->end_seq)
+ 			flag |= FLAG_DATA;
+ 		else
+-			NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPPUREACKS);
++			__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPPUREACKS);
+ 
+ 		flag |= tcp_ack_update_window(sk, skb, ack, ack_seq);
+ 
+@@ -4128,7 +4128,7 @@ static void tcp_dsack_set(struct sock *sk, u32 seq, u32 end_seq)
+ 		else
+ 			mib_idx = LINUX_MIB_TCPDSACKOFOSENT;
+ 
+-		NET_INC_STATS_BH(sock_net(sk), mib_idx);
++		__NET_INC_STATS(sock_net(sk), mib_idx);
+ 
+ 		tp->rx_opt.dsack = 1;
+ 		tp->duplicate_sack[0].start_seq = seq;
+@@ -4152,7 +4152,7 @@ static void tcp_send_dupack(struct sock *sk, const struct sk_buff *skb)
+ 
+ 	if (TCP_SKB_CB(skb)->end_seq != TCP_SKB_CB(skb)->seq &&
+ 	    before(TCP_SKB_CB(skb)->seq, tp->rcv_nxt)) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKLOST);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKLOST);
+ 		tcp_enter_quickack_mode(sk);
+ 
+ 		if (tcp_is_sack(tp) && sysctl_tcp_dsack) {
+@@ -4302,7 +4302,7 @@ static bool tcp_try_coalesce(struct sock *sk,
+ 
+ 	atomic_add(delta, &sk->sk_rmem_alloc);
+ 	sk_mem_charge(sk, delta);
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPRCVCOALESCE);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPRCVCOALESCE);
+ 	TCP_SKB_CB(to)->end_seq = TCP_SKB_CB(from)->end_seq;
+ 	TCP_SKB_CB(to)->ack_seq = TCP_SKB_CB(from)->ack_seq;
+ 	TCP_SKB_CB(to)->tcp_flags |= TCP_SKB_CB(from)->tcp_flags;
+@@ -4390,7 +4390,7 @@ static void tcp_data_queue_ofo(struct sock *sk, struct sk_buff *skb)
+ 	tcp_ecn_check_ce(tp, skb);
+ 
+ 	if (unlikely(tcp_try_rmem_schedule(sk, skb, skb->truesize))) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPOFODROP);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPOFODROP);
+ 		tcp_drop(sk, skb);
+ 		return;
+ 	}
+@@ -4399,7 +4399,7 @@ static void tcp_data_queue_ofo(struct sock *sk, struct sk_buff *skb)
+ 	tp->pred_flags = 0;
+ 	inet_csk_schedule_ack(sk);
+ 
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPOFOQUEUE);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPOFOQUEUE);
+ 	SOCK_DEBUG(sk, "out of order segment: rcv_next %X seq %X - %X\n",
+ 		   tp->rcv_nxt, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq);
+ 
+@@ -4454,7 +4454,7 @@ static void tcp_data_queue_ofo(struct sock *sk, struct sk_buff *skb)
+ 	if (skb1 && before(seq, TCP_SKB_CB(skb1)->end_seq)) {
+ 		if (!after(end_seq, TCP_SKB_CB(skb1)->end_seq)) {
+ 			/* All the bits are present. Drop. */
+-			NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPOFOMERGE);
++			__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPOFOMERGE);
+ 			tcp_drop(sk, skb);
+ 			skb = NULL;
+ 			tcp_dsack_set(sk, seq, end_seq);
+@@ -4493,7 +4493,7 @@ static void tcp_data_queue_ofo(struct sock *sk, struct sk_buff *skb)
+ 		__skb_unlink(skb1, &tp->out_of_order_queue);
+ 		tcp_dsack_extend(sk, TCP_SKB_CB(skb1)->seq,
+ 				 TCP_SKB_CB(skb1)->end_seq);
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPOFOMERGE);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPOFOMERGE);
+ 		tcp_drop(sk, skb1);
+ 	}
+ 
+@@ -4658,7 +4658,7 @@ static void tcp_data_queue(struct sock *sk, struct sk_buff *skb)
+ 
+ 	if (!after(TCP_SKB_CB(skb)->end_seq, tp->rcv_nxt)) {
+ 		/* A retransmit, 2nd most common case.  Force an immediate ack. */
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKLOST);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKLOST);
+ 		tcp_dsack_set(sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq);
+ 
+ out_of_window:
+@@ -4704,7 +4704,7 @@ static struct sk_buff *tcp_collapse_one(struct sock *sk, struct sk_buff *skb,
+ 
+ 	__skb_unlink(skb, list);
+ 	__kfree_skb(skb);
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPRCVCOLLAPSED);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPRCVCOLLAPSED);
+ 
+ 	return next;
+ }
+@@ -4863,7 +4863,7 @@ static bool tcp_prune_ofo_queue(struct sock *sk)
+ 	bool res = false;
+ 
+ 	if (!skb_queue_empty(&tp->out_of_order_queue)) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_OFOPRUNED);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_OFOPRUNED);
+ 		__skb_queue_purge(&tp->out_of_order_queue);
+ 
+ 		/* Reset SACK state.  A conforming SACK implementation will
+@@ -4892,7 +4892,7 @@ static int tcp_prune_queue(struct sock *sk)
+ 
+ 	SOCK_DEBUG(sk, "prune_queue: c=%x\n", tp->copied_seq);
+ 
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_PRUNECALLED);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_PRUNECALLED);
+ 
+ 	if (atomic_read(&sk->sk_rmem_alloc) >= sk->sk_rcvbuf)
+ 		tcp_clamp_window(sk);
+@@ -4922,7 +4922,7 @@ static int tcp_prune_queue(struct sock *sk)
+ 	 * drop receive data on the floor.  It will get retransmitted
+ 	 * and hopefully then we'll have sufficient space.
+ 	 */
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_RCVPRUNED);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_RCVPRUNED);
+ 
+ 	/* Massive buffer overcommit. */
+ 	tp->pred_flags = 0;
+@@ -5181,7 +5181,7 @@ static bool tcp_validate_incoming(struct sock *sk, struct sk_buff *skb,
+ 	if (tcp_fast_parse_options(skb, th, tp) && tp->rx_opt.saw_tstamp &&
+ 	    tcp_paws_discard(sk, skb)) {
+ 		if (!th->rst) {
+-			NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_PAWSESTABREJECTED);
++			__NET_INC_STATS(sock_net(sk), LINUX_MIB_PAWSESTABREJECTED);
+ 			if (!tcp_oow_rate_limited(sock_net(sk), skb,
+ 						  LINUX_MIB_TCPACKSKIPPEDPAWS,
+ 						  &tp->last_oow_ack_time))
+@@ -5234,7 +5234,7 @@ static bool tcp_validate_incoming(struct sock *sk, struct sk_buff *skb,
+ syn_challenge:
+ 		if (syn_inerr)
+ 			__TCP_INC_STATS(sock_net(sk), TCP_MIB_INERRS);
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPSYNCHALLENGE);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPSYNCHALLENGE);
+ 		tcp_send_challenge_ack(sk, skb);
+ 		goto discard;
+ 	}
+@@ -5377,7 +5377,8 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb,
+ 
+ 					__skb_pull(skb, tcp_header_len);
+ 					tcp_rcv_nxt_update(tp, TCP_SKB_CB(skb)->end_seq);
+-					NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPHPHITSTOUSER);
++					__NET_INC_STATS(sock_net(sk),
++							LINUX_MIB_TCPHPHITSTOUSER);
+ 					eaten = 1;
+ 				}
+ 			}
+@@ -5399,7 +5400,7 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb,
+ 
+ 				tcp_rcv_rtt_measure_ts(sk, skb);
+ 
+-				NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPHPHITS);
++				__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPHPHITS);
+ 
+ 				/* Bulk data transfer: receiver */
+ 				eaten = tcp_queue_rcv(sk, skb, tcp_header_len,
+@@ -5549,12 +5550,14 @@ static bool tcp_rcv_fastopen_synack(struct sock *sk, struct sk_buff *synack,
+ 				break;
+ 		}
+ 		tcp_rearm_rto(sk);
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPFASTOPENACTIVEFAIL);
++		__NET_INC_STATS(sock_net(sk),
++				LINUX_MIB_TCPFASTOPENACTIVEFAIL);
+ 		return true;
+ 	}
+ 	tp->syn_data_acked = tp->syn_data;
+ 	if (tp->syn_data_acked)
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPFASTOPENACTIVE);
++		__NET_INC_STATS(sock_net(sk),
++				LINUX_MIB_TCPFASTOPENACTIVE);
+ 
+ 	tcp_fastopen_add_skb(sk, synack);
+ 
+@@ -5589,7 +5592,8 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
+ 		if (tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr &&
+ 		    !between(tp->rx_opt.rcv_tsecr, tp->retrans_stamp,
+ 			     tcp_time_stamp)) {
+-			NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_PAWSACTIVEREJECTED);
++			__NET_INC_STATS(sock_net(sk),
++					LINUX_MIB_PAWSACTIVEREJECTED);
+ 			goto reset_and_undo;
+ 		}
+ 
+@@ -5958,7 +5962,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
+ 		    (TCP_SKB_CB(skb)->end_seq != TCP_SKB_CB(skb)->seq &&
+ 		     after(TCP_SKB_CB(skb)->end_seq - th->fin, tp->rcv_nxt))) {
+ 			tcp_done(sk);
+-			NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPABORTONDATA);
++			__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONDATA);
+ 			return 1;
+ 		}
+ 
+@@ -6015,7 +6019,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
+ 		if (sk->sk_shutdown & RCV_SHUTDOWN) {
+ 			if (TCP_SKB_CB(skb)->end_seq != TCP_SKB_CB(skb)->seq &&
+ 			    after(TCP_SKB_CB(skb)->end_seq - th->fin, tp->rcv_nxt)) {
+-				NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPABORTONDATA);
++				__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONDATA);
+ 				tcp_reset(sk);
+ 				return 1;
+ 			}
+@@ -6153,10 +6157,10 @@ static bool tcp_syn_flood_action(const struct sock *sk,
+ 	if (net->ipv4.sysctl_tcp_syncookies) {
+ 		msg = "Sending cookies";
+ 		want_cookie = true;
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPREQQFULLDOCOOKIES);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPREQQFULLDOCOOKIES);
+ 	} else
+ #endif
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPREQQFULLDROP);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPREQQFULLDROP);
+ 
+ 	if (!queue->synflood_warned &&
+ 	    net->ipv4.sysctl_tcp_syncookies != 2 &&
+@@ -6217,7 +6221,7 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
+ 	 * timeout.
+ 	 */
+ 	if (sk_acceptq_is_full(sk) && inet_csk_reqsk_queue_young(sk) > 1) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
+ 		goto drop;
+ 	}
+ 
+@@ -6264,7 +6268,7 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
+ 			if (dst && strict &&
+ 			    !tcp_peer_is_proven(req, dst, true,
+ 						tmp_opt.saw_tstamp)) {
+-				NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_PAWSPASSIVEREJECTED);
++				__NET_INC_STATS(sock_net(sk), LINUX_MIB_PAWSPASSIVEREJECTED);
+ 				goto drop_and_release;
+ 			}
+ 		}
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 378e92d41c6c..510f7a3c758b 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -320,7 +320,7 @@ void tcp_req_err(struct sock *sk, u32 seq, bool abort)
+ 	 * an established socket here.
+ 	 */
+ 	if (seq != tcp_rsk(req)->snt_isn) {
+-		NET_INC_STATS_BH(net, LINUX_MIB_OUTOFWINDOWICMPS);
++		__NET_INC_STATS(net, LINUX_MIB_OUTOFWINDOWICMPS);
+ 	} else if (abort) {
+ 		/*
+ 		 * Still in SYN_RECV, just remove it silently.
+@@ -396,13 +396,13 @@ void tcp_v4_err(struct sk_buff *icmp_skb, u32 info)
+ 	 */
+ 	if (sock_owned_by_user(sk)) {
+ 		if (!(type == ICMP_DEST_UNREACH && code == ICMP_FRAG_NEEDED))
+-			NET_INC_STATS_BH(net, LINUX_MIB_LOCKDROPPEDICMPS);
++			__NET_INC_STATS(net, LINUX_MIB_LOCKDROPPEDICMPS);
+ 	}
+ 	if (sk->sk_state == TCP_CLOSE)
+ 		goto out;
+ 
+ 	if (unlikely(iph->ttl < inet_sk(sk)->min_ttl)) {
+-		NET_INC_STATS_BH(net, LINUX_MIB_TCPMINTTLDROP);
++		__NET_INC_STATS(net, LINUX_MIB_TCPMINTTLDROP);
+ 		goto out;
+ 	}
+ 
+@@ -413,7 +413,7 @@ void tcp_v4_err(struct sk_buff *icmp_skb, u32 info)
+ 	snd_una = fastopen ? tcp_rsk(fastopen)->snt_isn : tp->snd_una;
+ 	if (sk->sk_state != TCP_LISTEN &&
+ 	    !between(seq, snd_una, tp->snd_nxt)) {
+-		NET_INC_STATS_BH(net, LINUX_MIB_OUTOFWINDOWICMPS);
++		__NET_INC_STATS(net, LINUX_MIB_OUTOFWINDOWICMPS);
+ 		goto out;
+ 	}
+ 
+@@ -1151,12 +1151,12 @@ static bool tcp_v4_inbound_md5_hash(const struct sock *sk,
+ 		return false;
+ 
+ 	if (hash_expected && !hash_location) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPMD5NOTFOUND);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5NOTFOUND);
+ 		return true;
+ 	}
+ 
+ 	if (!hash_expected && hash_location) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPMD5UNEXPECTED);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5UNEXPECTED);
+ 		return true;
+ 	}
+ 
+@@ -1342,7 +1342,7 @@ struct sock *tcp_v4_syn_recv_sock(const struct sock *sk, struct sk_buff *skb,
+ 	return newsk;
+ 
+ exit_overflow:
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
+ exit_nonewsk:
+ 	dst_release(dst);
+ exit:
+@@ -1513,8 +1513,8 @@ bool tcp_prequeue(struct sock *sk, struct sk_buff *skb)
+ 
+ 		while ((skb1 = __skb_dequeue(&tp->ucopy.prequeue)) != NULL) {
+ 			sk_backlog_rcv(sk, skb1);
+-			NET_INC_STATS_BH(sock_net(sk),
+-					 LINUX_MIB_TCPPREQUEUEDROPPED);
++			__NET_INC_STATS(sock_net(sk),
++					LINUX_MIB_TCPPREQUEUEDROPPED);
+ 		}
+ 
+ 		tp->ucopy.memory = 0;
+@@ -1629,7 +1629,7 @@ int tcp_v4_rcv(struct sk_buff *skb)
+ 		}
+ 	}
+ 	if (unlikely(iph->ttl < inet_sk(sk)->min_ttl)) {
+-		NET_INC_STATS_BH(net, LINUX_MIB_TCPMINTTLDROP);
++		__NET_INC_STATS(net, LINUX_MIB_TCPMINTTLDROP);
+ 		goto discard_and_relse;
+ 	}
+ 
+@@ -1662,7 +1662,7 @@ int tcp_v4_rcv(struct sk_buff *skb)
+ 	} else if (unlikely(sk_add_backlog(sk, skb,
+ 					   sk->sk_rcvbuf + sk->sk_sndbuf))) {
+ 		bh_unlock_sock(sk);
+-		NET_INC_STATS_BH(net, LINUX_MIB_TCPBACKLOGDROP);
++		__NET_INC_STATS(net, LINUX_MIB_TCPBACKLOGDROP);
+ 		goto discard_and_relse;
+ 	}
+ 	bh_unlock_sock(sk);
+diff --git a/net/ipv4/tcp_minisocks.c b/net/ipv4/tcp_minisocks.c
+index 0be6bfeab553..ffbfecdae471 100644
+--- a/net/ipv4/tcp_minisocks.c
++++ b/net/ipv4/tcp_minisocks.c
+@@ -235,7 +235,7 @@ tcp_timewait_state_process(struct inet_timewait_sock *tw, struct sk_buff *skb,
+ 	}
+ 
+ 	if (paws_reject)
+-		NET_INC_STATS_BH(twsk_net(tw), LINUX_MIB_PAWSESTABREJECTED);
++		__NET_INC_STATS(twsk_net(tw), LINUX_MIB_PAWSESTABREJECTED);
+ 
+ 	if (!th->rst) {
+ 		/* In this case we must reset the TIMEWAIT timer.
+@@ -337,7 +337,7 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
+ 		 * socket up.  We've got bigger problems than
+ 		 * non-graceful socket closings.
+ 		 */
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPTIMEWAITOVERFLOW);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPTIMEWAITOVERFLOW);
+ 	}
+ 
+ 	tcp_update_metrics(sk);
+@@ -710,7 +710,7 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
+ 					  &tcp_rsk(req)->last_oow_ack_time))
+ 			req->rsk_ops->send_ack(sk, skb, req);
+ 		if (paws_reject)
+-			NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_PAWSESTABREJECTED);
++			__NET_INC_STATS(sock_net(sk), LINUX_MIB_PAWSESTABREJECTED);
+ 		return NULL;
+ 	}
+ 
+@@ -752,7 +752,7 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
+ 	if (req->num_timeout < inet_csk(sk)->icsk_accept_queue.rskq_defer_accept &&
+ 	    TCP_SKB_CB(skb)->end_seq == tcp_rsk(req)->rcv_isn + 1) {
+ 		inet_rsk(req)->acked = 1;
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPDEFERACCEPTDROP);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPDEFERACCEPTDROP);
+ 		return NULL;
+ 	}
+ 
+@@ -791,7 +791,7 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
+ 	}
+ 	if (!fastopen) {
+ 		inet_csk_reqsk_queue_drop(sk, req);
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_EMBRYONICRSTS);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_EMBRYONICRSTS);
+ 	}
+ 	return NULL;
+ }
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index c48baf734e8c..b1b2045ac3a9 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -2212,8 +2212,8 @@ static bool skb_still_in_host_queue(const struct sock *sk,
+ 				    const struct sk_buff *skb)
+ {
+ 	if (unlikely(skb_fclone_busy(sk, skb))) {
+-		NET_INC_STATS_BH(sock_net(sk),
+-				 LINUX_MIB_TCPSPURIOUS_RTX_HOSTQUEUES);
++		__NET_INC_STATS(sock_net(sk),
++				LINUX_MIB_TCPSPURIOUS_RTX_HOSTQUEUES);
+ 		return true;
+ 	}
+ 	return false;
+@@ -2275,7 +2275,7 @@ void tcp_send_loss_probe(struct sock *sk)
+ 	tp->tlp_high_seq = tp->snd_nxt;
+ 
+ probe_sent:
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPLOSSPROBES);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPLOSSPROBES);
+ 	/* Reset s.t. tcp_rearm_rto will restart timer from now */
+ 	inet_csk(sk)->icsk_pending = 0;
+ rearm_timer:
+@@ -2656,7 +2656,7 @@ int __tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb, int segs)
+ 		/* Update global TCP statistics. */
+ 		TCP_ADD_STATS(sock_net(sk), TCP_MIB_RETRANSSEGS, segs);
+ 		if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_SYN)
+-			NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPSYNRETRANS);
++			__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPSYNRETRANS);
+ 		tp->total_retrans += segs;
+ 	}
+ 	return err;
+@@ -2681,7 +2681,7 @@ int tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb, int segs)
+ 			tp->retrans_stamp = tcp_skb_timestamp(skb);
+ 
+ 	} else if (err != -EBUSY) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPRETRANSFAIL);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPRETRANSFAIL);
+ 	}
+ 
+ 	if (tp->undo_retrans < 0)
+@@ -2805,7 +2805,7 @@ void tcp_xmit_retransmit_queue(struct sock *sk)
+ 		if (tcp_retransmit_skb(sk, skb, segs))
+ 			return;
+ 
+-		NET_INC_STATS_BH(sock_net(sk), mib_idx);
++		__NET_INC_STATS(sock_net(sk), mib_idx);
+ 
+ 		if (tcp_in_cwnd_reduction(sk))
+ 			tp->prr_out += tcp_skb_pcount(skb);
+@@ -3541,7 +3541,7 @@ int tcp_rtx_synack(const struct sock *sk, struct request_sock *req)
+ 	res = af_ops->send_synack(sk, NULL, &fl, req, NULL, TCP_SYNACK_NORMAL);
+ 	if (!res) {
+ 		__TCP_INC_STATS(sock_net(sk), TCP_MIB_RETRANSSEGS);
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPSYNRETRANS);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPSYNRETRANS);
+ 	}
+ 	return res;
+ }
+diff --git a/net/ipv4/tcp_recovery.c b/net/ipv4/tcp_recovery.c
+index 5353085fd0b2..e0d0afaf15be 100644
+--- a/net/ipv4/tcp_recovery.c
++++ b/net/ipv4/tcp_recovery.c
+@@ -65,8 +65,8 @@ int tcp_rack_mark_lost(struct sock *sk)
+ 			if (scb->sacked & TCPCB_SACKED_RETRANS) {
+ 				scb->sacked &= ~TCPCB_SACKED_RETRANS;
+ 				tp->retrans_out -= tcp_skb_pcount(skb);
+-				NET_INC_STATS_BH(sock_net(sk),
+-						 LINUX_MIB_TCPLOSTRETRANSMIT);
++				__NET_INC_STATS(sock_net(sk),
++						LINUX_MIB_TCPLOSTRETRANSMIT);
+ 			}
+ 		} else if (!(scb->sacked & TCPCB_RETRANS)) {
+ 			/* Original data are sent sequentially so stop early
+diff --git a/net/ipv4/tcp_timer.c b/net/ipv4/tcp_timer.c
+index 373b03e78aaa..35f643d8ffbb 100644
+--- a/net/ipv4/tcp_timer.c
++++ b/net/ipv4/tcp_timer.c
+@@ -30,7 +30,7 @@ static void tcp_write_err(struct sock *sk)
+ 	sk->sk_error_report(sk);
+ 
+ 	tcp_done(sk);
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPABORTONTIMEOUT);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONTIMEOUT);
+ }
+ 
+ /* Do not allow orphaned sockets to eat all our resources.
+@@ -68,7 +68,7 @@ static int tcp_out_of_resources(struct sock *sk, bool do_reset)
+ 		if (do_reset)
+ 			tcp_send_active_reset(sk, GFP_ATOMIC);
+ 		tcp_done(sk);
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPABORTONMEMORY);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONMEMORY);
+ 		return 1;
+ 	}
+ 	return 0;
+@@ -162,8 +162,8 @@ static int tcp_write_timeout(struct sock *sk)
+ 			if (tp->syn_fastopen || tp->syn_data)
+ 				tcp_fastopen_cache_set(sk, 0, NULL, true, 0);
+ 			if (tp->syn_data && icsk->icsk_retransmits == 1)
+-				NET_INC_STATS_BH(sock_net(sk),
+-						 LINUX_MIB_TCPFASTOPENACTIVEFAIL);
++				__NET_INC_STATS(sock_net(sk),
++						LINUX_MIB_TCPFASTOPENACTIVEFAIL);
+ 		}
+ 		retry_until = icsk->icsk_syn_retries ? : net->ipv4.sysctl_tcp_syn_retries;
+ 		syn_set = true;
+@@ -178,8 +178,8 @@ static int tcp_write_timeout(struct sock *sk)
+ 			    tp->bytes_acked <= tp->rx_opt.mss_clamp) {
+ 				tcp_fastopen_cache_set(sk, 0, NULL, true, 0);
+ 				if (icsk->icsk_retransmits == net->ipv4.sysctl_tcp_retries1)
+-					NET_INC_STATS_BH(sock_net(sk),
+-							 LINUX_MIB_TCPFASTOPENACTIVEFAIL);
++					__NET_INC_STATS(sock_net(sk),
++							LINUX_MIB_TCPFASTOPENACTIVEFAIL);
+ 			}
+ 			/* Black hole detection */
+ 			tcp_mtu_probing(icsk, sk);
+@@ -228,7 +228,7 @@ void tcp_delack_timer_handler(struct sock *sk)
+ 	if (!skb_queue_empty(&tp->ucopy.prequeue)) {
+ 		struct sk_buff *skb;
+ 
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPSCHEDULERFAILED);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPSCHEDULERFAILED);
+ 
+ 		while ((skb = __skb_dequeue(&tp->ucopy.prequeue)) != NULL)
+ 			sk_backlog_rcv(sk, skb);
+@@ -248,7 +248,7 @@ void tcp_delack_timer_handler(struct sock *sk)
+ 			icsk->icsk_ack.ato      = TCP_ATO_MIN;
+ 		}
+ 		tcp_send_ack(sk);
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKS);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKS);
+ 	}
+ 
+ out:
+@@ -265,7 +265,7 @@ static void tcp_delack_timer(unsigned long data)
+ 		tcp_delack_timer_handler(sk);
+ 	} else {
+ 		inet_csk(sk)->icsk_ack.blocked = 1;
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);
+ 		/* deleguate our work to tcp_release_cb() */
+ 		if (!test_and_set_bit(TCP_DELACK_TIMER_DEFERRED, &tcp_sk(sk)->tsq_flags))
+ 			sock_hold(sk);
+@@ -431,7 +431,7 @@ void tcp_retransmit_timer(struct sock *sk)
+ 		} else {
+ 			mib_idx = LINUX_MIB_TCPTIMEOUTS;
+ 		}
+-		NET_INC_STATS_BH(sock_net(sk), mib_idx);
++		__NET_INC_STATS(sock_net(sk), mib_idx);
+ 	}
+ 
+ 	tcp_enter_loss(sk);
+@@ -549,7 +549,7 @@ void tcp_syn_ack_timeout(const struct request_sock *req)
+ {
+ 	struct net *net = read_pnet(&inet_rsk(req)->ireq_net);
+ 
+-	NET_INC_STATS_BH(net, LINUX_MIB_TCPTIMEOUTS);
++	__NET_INC_STATS(net, LINUX_MIB_TCPTIMEOUTS);
+ }
+ EXPORT_SYMBOL(tcp_syn_ack_timeout);
+ 
+diff --git a/net/ipv6/inet6_hashtables.c b/net/ipv6/inet6_hashtables.c
+index f1678388fb0d..00cf28ad4565 100644
+--- a/net/ipv6/inet6_hashtables.c
++++ b/net/ipv6/inet6_hashtables.c
+@@ -222,7 +222,7 @@ static int __inet6_check_established(struct inet_timewait_death_row *death_row,
+ 	__sk_nulls_add_node_rcu(sk, &head->chain);
+ 	if (tw) {
+ 		sk_nulls_del_node_init_rcu((struct sock *)tw);
+-		NET_INC_STATS_BH(net, LINUX_MIB_TIMEWAITRECYCLED);
++		__NET_INC_STATS(net, LINUX_MIB_TIMEWAITRECYCLED);
+ 	}
+ 	spin_unlock(lock);
+ 	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
+diff --git a/net/ipv6/syncookies.c b/net/ipv6/syncookies.c
+index aab91fa86c5e..59c483937aec 100644
+--- a/net/ipv6/syncookies.c
++++ b/net/ipv6/syncookies.c
+@@ -155,11 +155,11 @@ struct sock *cookie_v6_check(struct sock *sk, struct sk_buff *skb)
+ 
+ 	mss = __cookie_v6_check(ipv6_hdr(skb), th, cookie);
+ 	if (mss == 0) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_SYNCOOKIESFAILED);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_SYNCOOKIESFAILED);
+ 		goto out;
+ 	}
+ 
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_SYNCOOKIESRECV);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_SYNCOOKIESRECV);
+ 
+ 	/* check for timestamp cookie support */
+ 	memset(&tcp_opt, 0, sizeof(tcp_opt));
+diff --git a/net/ipv6/tcp_ipv6.c b/net/ipv6/tcp_ipv6.c
+index 78c45c027acc..52914714b923 100644
+--- a/net/ipv6/tcp_ipv6.c
++++ b/net/ipv6/tcp_ipv6.c
+@@ -352,13 +352,13 @@ static void tcp_v6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 
+ 	bh_lock_sock(sk);
+ 	if (sock_owned_by_user(sk) && type != ICMPV6_PKT_TOOBIG)
+-		NET_INC_STATS_BH(net, LINUX_MIB_LOCKDROPPEDICMPS);
++		__NET_INC_STATS(net, LINUX_MIB_LOCKDROPPEDICMPS);
+ 
+ 	if (sk->sk_state == TCP_CLOSE)
+ 		goto out;
+ 
+ 	if (ipv6_hdr(skb)->hop_limit < inet6_sk(sk)->min_hopcount) {
+-		NET_INC_STATS_BH(net, LINUX_MIB_TCPMINTTLDROP);
++		__NET_INC_STATS(net, LINUX_MIB_TCPMINTTLDROP);
+ 		goto out;
+ 	}
+ 
+@@ -368,7 +368,7 @@ static void tcp_v6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 	snd_una = fastopen ? tcp_rsk(fastopen)->snt_isn : tp->snd_una;
+ 	if (sk->sk_state != TCP_LISTEN &&
+ 	    !between(seq, snd_una, tp->snd_nxt)) {
+-		NET_INC_STATS_BH(net, LINUX_MIB_OUTOFWINDOWICMPS);
++		__NET_INC_STATS(net, LINUX_MIB_OUTOFWINDOWICMPS);
+ 		goto out;
+ 	}
+ 
+@@ -649,12 +649,12 @@ static bool tcp_v6_inbound_md5_hash(const struct sock *sk,
+ 		return false;
+ 
+ 	if (hash_expected && !hash_location) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPMD5NOTFOUND);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5NOTFOUND);
+ 		return true;
+ 	}
+ 
+ 	if (!hash_expected && hash_location) {
+-		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPMD5UNEXPECTED);
++		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5UNEXPECTED);
+ 		return true;
+ 	}
+ 
+@@ -1165,7 +1165,7 @@ static struct sock *tcp_v6_syn_recv_sock(const struct sock *sk, struct sk_buff *
+ 	return newsk;
+ 
+ out_overflow:
+-	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
++	__NET_INC_STATS(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
+ out_nonewsk:
+ 	dst_release(dst);
+ out:
+@@ -1421,7 +1421,7 @@ static int tcp_v6_rcv(struct sk_buff *skb)
+ 		}
+ 	}
+ 	if (hdr->hop_limit < inet6_sk(sk)->min_hopcount) {
+-		NET_INC_STATS_BH(net, LINUX_MIB_TCPMINTTLDROP);
++		__NET_INC_STATS(net, LINUX_MIB_TCPMINTTLDROP);
+ 		goto discard_and_relse;
+ 	}
+ 
+@@ -1454,7 +1454,7 @@ static int tcp_v6_rcv(struct sk_buff *skb)
+ 	} else if (unlikely(sk_add_backlog(sk, skb,
+ 					   sk->sk_rcvbuf + sk->sk_sndbuf))) {
+ 		bh_unlock_sock(sk);
+-		NET_INC_STATS_BH(net, LINUX_MIB_TCPBACKLOGDROP);
++		__NET_INC_STATS(net, LINUX_MIB_TCPBACKLOGDROP);
+ 		goto discard_and_relse;
+ 	}
+ 	bh_unlock_sock(sk);
+diff --git a/net/sctp/input.c b/net/sctp/input.c
+index 12332fc3eb44..a701527a9480 100644
+--- a/net/sctp/input.c
++++ b/net/sctp/input.c
+@@ -532,7 +532,7 @@ struct sock *sctp_err_lookup(struct net *net, int family, struct sk_buff *skb,
+ 	 * servers this needs to be solved differently.
+ 	 */
+ 	if (sock_owned_by_user(sk))
+-		NET_INC_STATS_BH(net, LINUX_MIB_LOCKDROPPEDICMPS);
++		__NET_INC_STATS(net, LINUX_MIB_LOCKDROPPEDICMPS);
+ 
+ 	*app = asoc;
+ 	*tpp = transport;

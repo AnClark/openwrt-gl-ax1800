@@ -1,0 +1,181 @@
+commit a6db4494d218c2e559173661ee972e048dc04fdd
+Author: David Ahern <dsa@cumulusnetworks.com>
+Date:   Thu Apr 7 07:21:00 2016 -0700
+
+    net: ipv4: Consider failed nexthops in multipath routes
+    
+    Multipath route lookups should consider knowledge about next hops and not
+    select a hop that is known to be failed.
+    
+    Example:
+    
+                         [h2]                   [h3]   15.0.0.5
+                          |                      |
+                         3|                     3|
+                        [SP1]                  [SP2]--+
+                         1  2                   1     2
+                         |  |     /-------------+     |
+                         |   \   /                    |
+                         |     X                      |
+                         |    / \                     |
+                         |   /   \---------------\    |
+                         1  2                     1   2
+             12.0.0.2  [TOR1] 3-----------------3 [TOR2] 12.0.0.3
+                         4                         4
+                          \                       /
+                            \                    /
+                             \                  /
+                              -------|   |-----/
+                                     1   2
+                                    [TOR3]
+                                      3|
+                                       |
+                                      [h1]  12.0.0.1
+    
+    host h1 with IP 12.0.0.1 has 2 paths to host h3 at 15.0.0.5:
+    
+        root@h1:~# ip ro ls
+        ...
+        12.0.0.0/24 dev swp1  proto kernel  scope link  src 12.0.0.1
+        15.0.0.0/16
+                nexthop via 12.0.0.2  dev swp1 weight 1
+                nexthop via 12.0.0.3  dev swp1 weight 1
+        ...
+    
+    If the link between tor3 and tor1 is down and the link between tor1
+    and tor2 then tor1 is effectively cut-off from h1. Yet the route lookups
+    in h1 are alternating between the 2 routes: ping 15.0.0.5 gets one and
+    ssh 15.0.0.5 gets the other. Connections that attempt to use the
+    12.0.0.2 nexthop fail since that neighbor is not reachable:
+    
+        root@h1:~# ip neigh show
+        ...
+        12.0.0.3 dev swp1 lladdr 00:02:00:00:00:1b REACHABLE
+        12.0.0.2 dev swp1  FAILED
+        ...
+    
+    The failed path can be avoided by considering known neighbor information
+    when selecting next hops. If the neighbor lookup fails we have no
+    knowledge about the nexthop, so give it a shot. If there is an entry
+    then only select the nexthop if the state is sane. This is similar to
+    what fib_detect_death does.
+    
+    To maintain backward compatibility use of the neighbor information is
+    based on a new sysctl, fib_multipath_use_neigh.
+    
+    Signed-off-by: David Ahern <dsa@cumulusnetworks.com>
+    Reviewed-by: Julian Anastasov <ja@ssi.bg>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/Documentation/networking/ip-sysctl.txt b/Documentation/networking/ip-sysctl.txt
+index b183e2b606c8..6c7f365b1515 100644
+--- a/Documentation/networking/ip-sysctl.txt
++++ b/Documentation/networking/ip-sysctl.txt
+@@ -63,6 +63,16 @@ fwmark_reflect - BOOLEAN
+ 	fwmark of the packet they are replying to.
+ 	Default: 0
+ 
++fib_multipath_use_neigh - BOOLEAN
++	Use status of existing neighbor entry when determining nexthop for
++	multipath routes. If disabled, neighbor information is not used and
++	packets could be directed to a failed nexthop. Only valid for kernels
++	built with CONFIG_IP_ROUTE_MULTIPATH enabled.
++	Default: 0 (disabled)
++	Possible values:
++	0 - disabled
++	1 - enabled
++
+ route/max_size - INTEGER
+ 	Maximum number of routes allowed in the kernel.  Increase
+ 	this when using large numbers of interfaces and/or routes.
+diff --git a/include/net/netns/ipv4.h b/include/net/netns/ipv4.h
+index a69cde3ce460..d061ffeb1e71 100644
+--- a/include/net/netns/ipv4.h
++++ b/include/net/netns/ipv4.h
+@@ -132,6 +132,9 @@ struct netns_ipv4 {
+ 	struct list_head	mr_tables;
+ 	struct fib_rules_ops	*mr_rules_ops;
+ #endif
++#endif
++#ifdef CONFIG_IP_ROUTE_MULTIPATH
++	int sysctl_fib_multipath_use_neigh;
+ #endif
+ 	atomic_t	rt_genid;
+ };
+diff --git a/net/ipv4/fib_semantics.c b/net/ipv4/fib_semantics.c
+index d97268e8ff10..ab64d9f2eef9 100644
+--- a/net/ipv4/fib_semantics.c
++++ b/net/ipv4/fib_semantics.c
+@@ -1559,21 +1559,45 @@ int fib_sync_up(struct net_device *dev, unsigned int nh_flags)
+ }
+ 
+ #ifdef CONFIG_IP_ROUTE_MULTIPATH
++static bool fib_good_nh(const struct fib_nh *nh)
++{
++	int state = NUD_REACHABLE;
++
++	if (nh->nh_scope == RT_SCOPE_LINK) {
++		struct neighbour *n;
++
++		rcu_read_lock_bh();
++
++		n = __ipv4_neigh_lookup_noref(nh->nh_dev, nh->nh_gw);
++		if (n)
++			state = n->nud_state;
++
++		rcu_read_unlock_bh();
++	}
++
++	return !!(state & NUD_VALID);
++}
+ 
+ void fib_select_multipath(struct fib_result *res, int hash)
+ {
+ 	struct fib_info *fi = res->fi;
++	struct net *net = fi->fib_net;
++	bool first = false;
+ 
+ 	for_nexthops(fi) {
+ 		if (hash > atomic_read(&nh->nh_upper_bound))
+ 			continue;
+ 
+-		res->nh_sel = nhsel;
+-		return;
++		if (!net->ipv4.sysctl_fib_multipath_use_neigh ||
++		    fib_good_nh(nh)) {
++			res->nh_sel = nhsel;
++			return;
++		}
++		if (!first) {
++			res->nh_sel = nhsel;
++			first = true;
++		}
+ 	} endfor_nexthops(fi);
+-
+-	/* Race condition: route has just become dead. */
+-	res->nh_sel = 0;
+ }
+ #endif
+ 
+diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
+index 1e1fe6086dd9..bb0419582b8d 100644
+--- a/net/ipv4/sysctl_net_ipv4.c
++++ b/net/ipv4/sysctl_net_ipv4.c
+@@ -960,6 +960,17 @@ static struct ctl_table ipv4_net_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec,
+ 	},
++#ifdef CONFIG_IP_ROUTE_MULTIPATH
++	{
++		.procname	= "fib_multipath_use_neigh",
++		.data		= &init_net.ipv4.sysctl_fib_multipath_use_neigh,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= &zero,
++		.extra2		= &one,
++	},
++#endif
+ 	{ }
+ };
+ 

@@ -1,0 +1,87 @@
+commit 65c9410cf55ecf32da1b720f563365d565d6289a
+Author: Eric Dumazet <edumazet@google.com>
+Date:   Thu Oct 26 21:55:03 2017 -0700
+
+    tcp: Namespace-ify sysctl_tcp_abort_on_overflow
+    
+    Signed-off-by: Eric Dumazet <edumazet@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/netns/ipv4.h b/include/net/netns/ipv4.h
+index 968edce38eb5..3875fdf6b186 100644
+--- a/include/net/netns/ipv4.h
++++ b/include/net/netns/ipv4.h
+@@ -135,6 +135,7 @@ struct netns_ipv4 {
+ 	int sysctl_tcp_retrans_collapse;
+ 	int sysctl_tcp_stdurg;
+ 	int sysctl_tcp_rfc1337;
++	int sysctl_tcp_abort_on_overflow;
+ 	struct inet_timewait_death_row tcp_death_row;
+ 	int sysctl_max_syn_backlog;
+ 	int sysctl_tcp_fastopen;
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 2aea2b3373b3..7331281a2292 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -243,7 +243,6 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
+ 
+ 
+ /* sysctl variables for tcp */
+-extern int sysctl_tcp_abort_on_overflow;
+ extern int sysctl_tcp_max_orphans;
+ extern int sysctl_tcp_fack;
+ extern int sysctl_tcp_reordering;
+diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
+index 832e554235df..ffd1fd769bba 100644
+--- a/net/ipv4/sysctl_net_ipv4.c
++++ b/net/ipv4/sysctl_net_ipv4.c
+@@ -393,13 +393,6 @@ static struct ctl_table ipv4_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec
+ 	},
+-	{
+-		.procname	= "tcp_abort_on_overflow",
+-		.data		= &sysctl_tcp_abort_on_overflow,
+-		.maxlen		= sizeof(int),
+-		.mode		= 0644,
+-		.proc_handler	= proc_dointvec
+-	},
+ 	{
+ 		.procname	= "inet_peer_threshold",
+ 		.data		= &inet_peer_threshold,
+@@ -1145,6 +1138,13 @@ static struct ctl_table ipv4_net_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec
+ 	},
++	{
++		.procname	= "tcp_abort_on_overflow",
++		.data		= &init_net.ipv4.sysctl_tcp_abort_on_overflow,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec
++	},
+ 	{ }
+ };
+ 
+diff --git a/net/ipv4/tcp_minisocks.c b/net/ipv4/tcp_minisocks.c
+index 11836667763c..3674d63170b2 100644
+--- a/net/ipv4/tcp_minisocks.c
++++ b/net/ipv4/tcp_minisocks.c
+@@ -29,8 +29,6 @@
+ #include <net/xfrm.h>
+ #include <net/busy_poll.h>
+ 
+-int sysctl_tcp_abort_on_overflow __read_mostly;
+-
+ static bool tcp_in_window(u32 seq, u32 end_seq, u32 s_win, u32 e_win)
+ {
+ 	if (seq == s_win)
+@@ -783,7 +781,7 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
+ 	return inet_csk_complete_hashdance(sk, child, req, own_req);
+ 
+ listen_overflow:
+-	if (!sysctl_tcp_abort_on_overflow) {
++	if (!sock_net(sk)->ipv4.sysctl_tcp_abort_on_overflow) {
+ 		inet_rsk(req)->acked = 1;
+ 		return NULL;
+ 	}

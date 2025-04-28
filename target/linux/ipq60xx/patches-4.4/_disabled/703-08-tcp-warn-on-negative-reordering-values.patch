@@ -1,0 +1,33 @@
+commit 6f5b24eed0278136c29c27f2a7b3a2b6a202ac68
+Author: Soheil Hassas Yeganeh <soheil@google.com>
+Date:   Tue May 16 17:39:02 2017 -0400
+
+    tcp: warn on negative reordering values
+    
+    Commit bafbb9c73241 ("tcp: eliminate negative reordering
+    in tcp_clean_rtx_queue") fixes an issue for negative
+    reordering metrics.
+    
+    To be resilient to such errors, warn and return
+    when a negative metric is passed to tcp_update_reordering().
+    
+    Signed-off-by: Soheil Hassas Yeganeh <soheil@google.com>
+    Signed-off-by: Neal Cardwell <ncardwell@google.com>
+    Signed-off-by: Yuchung Cheng <ycheng@google.com>
+    Signed-off-by: Eric Dumazet <edumazet@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index bbadd79815a4..2fa55f57ac06 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -887,6 +887,9 @@ static void tcp_update_reordering(struct sock *sk, const int metric,
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	int mib_idx;
+ 
++	if (WARN_ON_ONCE(metric < 0))
++		return;
++
+ 	if (metric > tp->reordering) {
+ 		tp->reordering = min(sysctl_tcp_max_reordering, metric);
+ 

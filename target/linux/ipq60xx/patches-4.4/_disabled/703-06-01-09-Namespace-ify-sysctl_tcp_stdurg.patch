@@ -1,0 +1,86 @@
+commit 3f4c7c6f6a9053493ce7dd8a0f17ed8eafc53893
+Author: Eric Dumazet <edumazet@google.com>
+Date:   Thu Oct 26 21:55:01 2017 -0700
+
+    tcp: Namespace-ify sysctl_tcp_stdurg
+    
+    Signed-off-by: Eric Dumazet <edumazet@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/netns/ipv4.h b/include/net/netns/ipv4.h
+index b28c172b10e4..ffa2cf3dc747 100644
+--- a/include/net/netns/ipv4.h
++++ b/include/net/netns/ipv4.h
+@@ -133,6 +133,7 @@ struct netns_ipv4 {
+ 	int sysctl_tcp_thin_linear_timeouts;
+ 	int sysctl_tcp_slow_start_after_idle;
+ 	int sysctl_tcp_retrans_collapse;
++	int sysctl_tcp_stdurg;
+ 	struct inet_timewait_death_row tcp_death_row;
+ 	int sysctl_max_syn_backlog;
+ 	int sysctl_tcp_fastopen;
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 33cc86355b8f..cf3fac7008d7 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -243,7 +243,6 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
+ 
+ 
+ /* sysctl variables for tcp */
+-extern int sysctl_tcp_stdurg;
+ extern int sysctl_tcp_rfc1337;
+ extern int sysctl_tcp_abort_on_overflow;
+ extern int sysctl_tcp_max_orphans;
+diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
+index 533b92ad39dd..a34bb75815c1 100644
+--- a/net/ipv4/sysctl_net_ipv4.c
++++ b/net/ipv4/sysctl_net_ipv4.c
+@@ -400,13 +400,6 @@ static struct ctl_table ipv4_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec
+ 	},
+-	{
+-		.procname	= "tcp_stdurg",
+-		.data		= &sysctl_tcp_stdurg,
+-		.maxlen		= sizeof(int),
+-		.mode		= 0644,
+-		.proc_handler	= proc_dointvec
+-	},
+ 	{
+ 		.procname	= "tcp_rfc1337",
+ 		.data		= &sysctl_tcp_rfc1337,
+@@ -1145,6 +1138,13 @@ static struct ctl_table ipv4_net_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec
+ 	},
++	{
++		.procname	= "tcp_stdurg",
++		.data		= &init_net.ipv4.sysctl_tcp_stdurg,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec
++	},
+ 	{ }
+ };
+ 
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 5b2272dbf6a9..14b06963c102 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -89,7 +89,6 @@ EXPORT_SYMBOL(sysctl_tcp_adv_win_scale);
+ /* rfc5961 challenge ack rate limiting */
+ int sysctl_tcp_challenge_ack_limit = 1000;
+ 
+-int sysctl_tcp_stdurg __read_mostly;
+ int sysctl_tcp_rfc1337 __read_mostly;
+ int sysctl_tcp_max_orphans __read_mostly = NR_FILE;
+ int sysctl_tcp_frto __read_mostly = 2;
+@@ -5123,7 +5122,7 @@ static void tcp_check_urg(struct sock *sk, const struct tcphdr *th)
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	u32 ptr = ntohs(th->urg_ptr);
+ 
+-	if (ptr && !sysctl_tcp_stdurg)
++	if (ptr && !sock_net(sk)->ipv4.sysctl_tcp_stdurg)
+ 		ptr--;
+ 	ptr += ntohl(th->seq);
+ 
