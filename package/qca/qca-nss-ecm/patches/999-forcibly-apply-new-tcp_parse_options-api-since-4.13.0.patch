@@ -1,0 +1,20 @@
+diff --git a/ecm_tracker_tcp.c b/ecm_tracker_tcp.c
+index b62af45..c94cdc9 100644
+--- a/ecm_tracker_tcp.c
++++ b/ecm_tracker_tcp.c
+@@ -1137,11 +1137,11 @@ static bool ecm_tracker_tcp_extract_mss(struct sk_buff *skb, uint16_t *mss, stru
+ 	 * Parse the TCP header options
+ 	 */
+ 	memset(&opt_rx, 0, sizeof(opt_rx));
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0))
+-	tcp_parse_options(skb, &opt_rx, 0, NULL);
+-#else
++//#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0))
++//	tcp_parse_options(skb, &opt_rx, 0, NULL);
++//#else
+ 	tcp_parse_options(dev_net(skb->dev), skb, &opt_rx, 0, NULL);
+-#endif
++//#endif
+ 	/*
+ 	 * Was there an MSS?
+ 	 */

@@ -1,0 +1,14 @@
+NOTICE for 999-forcibly-apply-new-tcp_parse_options-api-since-4.13.0.patch
+
+In IPQ60xx Linux 4.4 patch set, I added a patch for updating tcp_parse_options()
+API from Linux source tree (commit ID eed29f17f09ad7f400bc245f209acad6a8214fac).
+The patch resides in:
+
+    target/linux/ipq60xx/patches-4.4/703-06-01-00-tcp-add-a-struct-net-parameter-to-tcp_parse_options.patch
+
+After applying this patch, we should modify qca-nss-ecm's source as well.
+It has a macro which applies the new API when kernel version is above 4.13.0,
+however as I backported the patch to 4.4.60, I should bypass this macro, then
+unconditionally apply the new API.
+
+AnClark 2025/05/05 
