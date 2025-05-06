@@ -1,61 +1,70 @@
-commit e0a1e5b519236dc1662ff25e42560dd1be9e3776
+commit b510f0d23a47c3d1f074fe583e7867dc4918fe02
 Author: Eric Dumazet <edumazet@google.com>
-Date:   Thu Oct 26 21:55:00 2017 -0700
+Date:   Thu Oct 26 21:54:59 2017 -0700
 
-    tcp: Namespace-ify sysctl_tcp_retrans_collapse
+    tcp: Namespace-ify sysctl_tcp_slow_start_after_idle
     
     Signed-off-by: Eric Dumazet <edumazet@google.com>
     Signed-off-by: David S. Miller <davem@davemloft.net>
 
 diff --git a/include/net/netns/ipv4.h b/include/net/netns/ipv4.h
-index 8662692686b3..b28c172b10e4 100644
+index 2a9f37b39c45..8662692686b3 100644
 --- a/include/net/netns/ipv4.h
 +++ b/include/net/netns/ipv4.h
-@@ -132,6 +132,7 @@ struct netns_ipv4 {
+@@ -131,6 +131,7 @@ struct netns_ipv4 {
+ 	int sysctl_tcp_early_retrans;
  	int sysctl_tcp_recovery;
  	int sysctl_tcp_thin_linear_timeouts;
- 	int sysctl_tcp_slow_start_after_idle;
-+	int sysctl_tcp_retrans_collapse;
++	int sysctl_tcp_slow_start_after_idle;
  	struct inet_timewait_death_row tcp_death_row;
  	int sysctl_max_syn_backlog;
  	int sysctl_tcp_fastopen;
 diff --git a/include/net/tcp.h b/include/net/tcp.h
-index cc2ab522eb5c..33cc86355b8f 100644
+index 063a7a48b7fe..cc2ab522eb5c 100644
 --- a/include/net/tcp.h
 +++ b/include/net/tcp.h
-@@ -243,7 +243,6 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
+@@ -262,7 +262,6 @@ extern int sysctl_tcp_nometrics_save;
+ extern int sysctl_tcp_moderate_rcvbuf;
+ extern int sysctl_tcp_tso_win_divisor;
+ extern int sysctl_tcp_workaround_signed_windows;
+-extern int sysctl_tcp_slow_start_after_idle;
  
+ #define TCP_RACK_LOSS_DETECTION  0x1 /* Use RACK to detect losses */
  
- /* sysctl variables for tcp */
--extern int sysctl_tcp_retrans_collapse;
- extern int sysctl_tcp_stdurg;
- extern int sysctl_tcp_rfc1337;
- extern int sysctl_tcp_abort_on_overflow;
+@@ -1308,7 +1307,7 @@ static inline void tcp_slow_start_after_idle_check(struct sock *sk)
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	s32 delta;
+ 
+-	if (!sysctl_tcp_slow_start_after_idle || tp->packets_out ||
++	if (!sock_net(sk)->ipv4.sysctl_tcp_slow_start_after_idle || tp->packets_out ||
+ 	    ca_ops->cong_control)
+ 		return;
+ 	delta = tcp_jiffies32 - tp->lsndtime;
 diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
-index 40d69af8b363..533b92ad39dd 100644
+index 12003214f4d8..40d69af8b363 100644
 --- a/net/ipv4/sysctl_net_ipv4.c
 +++ b/net/ipv4/sysctl_net_ipv4.c
-@@ -386,13 +386,6 @@ static int proc_tcp_available_ulp(struct ctl_table *ctl,
- }
- 
- static struct ctl_table ipv4_table[] = {
+@@ -571,13 +571,6 @@ static struct ctl_table ipv4_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec
+ 	},
 -	{
--		.procname	= "tcp_retrans_collapse",
--		.data		= &sysctl_tcp_retrans_collapse,
+-		.procname	= "tcp_slow_start_after_idle",
+-		.data		= &sysctl_tcp_slow_start_after_idle,
 -		.maxlen		= sizeof(int),
 -		.mode		= 0644,
 -		.proc_handler	= proc_dointvec
 -	},
+ #ifdef CONFIG_NETLABEL
  	{
- 		.procname	= "tcp_max_orphans",
- 		.data		= &sysctl_tcp_max_orphans,
+ 		.procname	= "cipso_cache_enable",
 @@ -1145,6 +1138,13 @@ static struct ctl_table ipv4_net_table[] = {
- 		.mode		= 0644,
- 		.proc_handler	= proc_dointvec
+ 		.mode           = 0644,
+ 		.proc_handler   = proc_dointvec
  	},
 +	{
-+		.procname	= "tcp_retrans_collapse",
-+		.data		= &init_net.ipv4.sysctl_tcp_retrans_collapse,
++		.procname	= "tcp_slow_start_after_idle",
++		.data		= &init_net.ipv4.sysctl_tcp_slow_start_after_idle,
 +		.maxlen		= sizeof(int),
 +		.mode		= 0644,
 +		.proc_handler	= proc_dointvec
@@ -64,38 +73,37 @@ index 40d69af8b363..533b92ad39dd 100644
  };
  
 diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
-index cea63a4b5965..2bc6ba2059d3 100644
+index 517ff1948a71..cea63a4b5965 100644
 --- a/net/ipv4/tcp_ipv4.c
 +++ b/net/ipv4/tcp_ipv4.c
-@@ -2487,7 +2487,7 @@ static int __net_init tcp_sk_init(struct net *net)
+@@ -2486,6 +2486,7 @@ static int __net_init tcp_sk_init(struct net *net)
+ 	net->ipv4.sysctl_tcp_timestamps = 1;
  	net->ipv4.sysctl_tcp_early_retrans = 3;
  	net->ipv4.sysctl_tcp_recovery = TCP_RACK_LOSS_DETECTION;
- 	net->ipv4.sysctl_tcp_slow_start_after_idle = 1; /* By default, RFC2861 behavior.  */
--
-+	net->ipv4.sysctl_tcp_retrans_collapse = 1;
++	net->ipv4.sysctl_tcp_slow_start_after_idle = 1; /* By default, RFC2861 behavior.  */
+ 
  	net->ipv4.sysctl_tcp_fastopen = TFO_CLIENT_ENABLE;
  	spin_lock_init(&net->ipv4.tcp_fastopen_ctx_lock);
- 	net->ipv4.sysctl_tcp_fastopen_blackhole_timeout = 60 * 60;
 diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
-index bdc288a06f94..55a0aa4b96df 100644
+index 21713836d46a..bdc288a06f94 100644
 --- a/net/ipv4/tcp_output.c
 +++ b/net/ipv4/tcp_output.c
-@@ -45,9 +45,6 @@
- 
- #include <trace/events/tcp.h>
- 
--/* People can turn this off for buggy TCP's found in printers etc. */
--int sysctl_tcp_retrans_collapse __read_mostly = 1;
--
- /* People can turn this on to work with those rare, broken TCPs that
-  * interpret the window field as a signed quantity.
+@@ -62,9 +62,6 @@ int sysctl_tcp_limit_output_bytes __read_mostly = 262144;
   */
-@@ -2804,7 +2801,7 @@ static void tcp_retrans_try_collapse(struct sock *sk, struct sk_buff *to,
- 	struct sk_buff *skb = to, *tmp;
- 	bool first = true;
+ int sysctl_tcp_tso_win_divisor __read_mostly = 3;
  
--	if (!sysctl_tcp_retrans_collapse)
-+	if (!sock_net(sk)->ipv4.sysctl_tcp_retrans_collapse)
- 		return;
- 	if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_SYN)
- 		return;
+-/* By default, RFC2861 behavior.  */
+-int sysctl_tcp_slow_start_after_idle __read_mostly = 1;
+-
+ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
+ 			   int push_one, gfp_t gfp);
+ 
+@@ -1690,7 +1687,7 @@ static void tcp_cwnd_validate(struct sock *sk, bool is_cwnd_limited)
+ 		if (tp->packets_out > tp->snd_cwnd_used)
+ 			tp->snd_cwnd_used = tp->packets_out;
+ 
+-		if (sysctl_tcp_slow_start_after_idle &&
++		if (sock_net(sk)->ipv4.sysctl_tcp_slow_start_after_idle &&
+ 		    (s32)(tcp_jiffies32 - tp->snd_cwnd_stamp) >= inet_csk(sk)->icsk_rto &&
+ 		    !ca_ops->cong_control)
+ 			tcp_cwnd_application_limited(sk);
