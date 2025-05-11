@@ -29,7 +29,7 @@ define Host/Compile
 		XATTR_SUPPORT= \
 		LZMA_LIB="$(STAGING_DIR_HOST)/lib/liblzma.a" \
 		EXTRA_CFLAGS="-I$(STAGING_DIR_HOST)/include \
-				$(OLD_SQUASHFS_VERSION)" \
+				$(OLD_SQUASHFS_VERSION) -std=gnu11" \
 		mksquashfs unsquashfs
 endef
 
