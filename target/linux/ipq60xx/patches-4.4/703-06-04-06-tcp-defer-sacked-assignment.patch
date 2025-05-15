@@ -1,0 +1,37 @@
+commit dca0aaf8472f15836a68bbed8a0ef9ea39e783aa
+Author: Eric Dumazet <edumazet@google.com>
+Date:   Wed Aug 17 07:48:36 2016 -0700
+
+    tcp: defer sacked assignment
+    
+    While chasing tcp_xmit_retransmit_queue() kasan issue, I found
+    that we could avoid reading sacked field of skb that we wont send,
+    possibly removing one cache line miss.
+    
+    Very minor change in slow path, but why not ? ;)
+    
+    Signed-off-by: Eric Dumazet <edumazet@google.com>
+    Acked-by: Neal Cardwell <ncardwell@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index bdaef7fd6e47..8b45794eb6b2 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -2776,7 +2776,7 @@ void tcp_xmit_retransmit_queue(struct sock *sk)
+ 
+ 	max_segs = tcp_tso_autosize(sk, tcp_current_mss(sk));
+ 	tcp_for_write_queue_from(skb, sk) {
+-		__u8 sacked = TCP_SKB_CB(skb)->sacked;
++		__u8 sacked;
+ 		int segs;
+ 
+ 		if (skb == tcp_send_head(sk))
+@@ -2788,6 +2788,7 @@ void tcp_xmit_retransmit_queue(struct sock *sk)
+ 		segs = tp->snd_cwnd - tcp_packets_in_flight(tp);
+ 		if (segs <= 0)
+ 			return;
++		sacked = TCP_SKB_CB(skb)->sacked;
+ 		/* In case tcp_shift_skb_data() have aggregated large skbs,
+ 		 * we need to make sure not sending too bigs TSO packets
+ 		 */

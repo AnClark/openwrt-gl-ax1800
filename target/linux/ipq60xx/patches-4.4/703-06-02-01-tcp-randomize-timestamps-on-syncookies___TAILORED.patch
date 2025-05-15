@@ -74,7 +74,7 @@ index 270e5cc43c99..8c0e5a901d64 100644
  			   struct flowi *fl, struct request_sock *req,
  			   struct tcp_fastopen_cookie *foc,
 diff --git a/net/core/secure_seq.c b/net/core/secure_seq.c
-index 6bd2f8fb0476..ae35cce3a40d 100644
+index 88568bf2..a75e221c 100644
 --- a/net/core/secure_seq.c
 +++ b/net/core/secure_seq.c
 @@ -24,9 +24,13 @@ static siphash_key_t ts_secret __read_mostly;
@@ -118,16 +118,15 @@ index 6bd2f8fb0476..ae35cce3a40d 100644
  {
  	const struct {
  		struct in6_addr saddr;
-@@ -78,14 +84,14 @@ u32 secure_tcpv6_seq_and_tsoff(const __be32 *saddr, const __be32 *daddr,
+@@ -78,14 +84,13 @@ u32 secure_tcpv6_seq_and_tsoff(const __be32 *saddr, const __be32 *daddr,
  		.sport = sport,
  		.dport = dport
  	};
 -	u64 hash;
 +	u32 hash;
-+
  	net_secret_init();
  	hash = siphash(&combined, offsetofend(typeof(combined), dport),
- 		       &net_secret);
+ 				&net_secret);
 -	*tsoff = secure_tcpv6_ts_off(saddr, daddr);
  	return seq_scale(hash);
  }
@@ -136,7 +135,7 @@ index 6bd2f8fb0476..ae35cce3a40d 100644
  
  u32 secure_ipv6_port_ephemeral(const __be32 *saddr, const __be32 *daddr,
  			       __be16 dport)
-@@ -107,11 +113,12 @@ EXPORT_SYMBOL(secure_ipv6_port_ephemeral);
+@@ -107,11 +112,12 @@ EXPORT_SYMBOL(secure_ipv6_port_ephemeral);
  #endif
  
  #ifdef CONFIG_INET
@@ -150,22 +149,22 @@ index 6bd2f8fb0476..ae35cce3a40d 100644
  	return siphash_2u32((__force u32)saddr, (__force u32)daddr,
  			    &ts_secret);
  }
-@@ -121,15 +128,15 @@ static u32 secure_tcp_ts_off(__be32 saddr, __be32 daddr)
+@@ -121,15 +127,15 @@ static u32 secure_tcp_ts_off(__be32 saddr, __be32 daddr)
   * it would be easy enough to have the former function use siphash_4u32, passing
   * the arguments as separate u32.
   */
 -u32 secure_tcp_seq_and_tsoff(__be32 saddr, __be32 daddr,
 -			     __be16 sport, __be16 dport, u32 *tsoff)
 +u32 secure_tcp_seq(__be32 saddr, __be32 daddr,
-+		   __be16 sport, __be16 dport)
++			     __be16 sport, __be16 dport)
  {
 -	u64 hash;
 +	u32 hash;
 +
  	net_secret_init();
  	hash = siphash_3u32((__force u32)saddr, (__force u32)daddr,
- 			    (__force u32)sport << 16 | (__force u32)dport,
- 			    &net_secret);
+ 				(__force u32)sport << 16 | (__force u32)dport,
+ 				&net_secret);
 -	*tsoff = secure_tcp_ts_off(saddr, daddr);
  	return seq_scale(hash);
  }

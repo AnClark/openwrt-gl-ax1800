@@ -1,0 +1,63 @@
+commit a3d2e9f8eb1487f4191ff08ce2d3d63702c65a90
+Author: Eric Dumazet <edumazet@google.com>
+Date:   Mon Jun 27 17:38:50 2016 +0200
+
+    tcp: do not send too big packets at retransmit time
+    
+    Arjun reported a bug in TCP stack and bisected it to a recent commit.
+    
+    In case where we process SACK, we can coalesce multiple skbs
+    into fat ones (tcp_shift_skb_data()), to lower write queue
+    overhead, because we do not expect to retransmit these packets.
+    
+    However, SACK reneging can happen, forcing the sender to retransmit
+    all these packets. If skb->len is above 64KB, we then send buggy
+    IP packets that could hang TSO engine on cxgb4.
+    
+    Neal suggested to use tcp_tso_autosize() instead of tp->gso_segs
+    so that we cook packets of optimal size vs TCP/pacing.
+    
+    Thanks to Arjun for reporting the bug and running the tests !
+    
+    Fixes: 10d3be569243 ("tcp-tso: do not split TSO packets at retransmit time")
+    Signed-off-by: Eric Dumazet <edumazet@google.com>
+    Reported-by: Arjun V <arjun@chelsio.com>
+    Tested-by: Arjun V <arjun@chelsio.com>
+    Acked-by: Neal Cardwell <ncardwell@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 05e233fb..be4e5bcc 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -2749,7 +2749,7 @@ void tcp_xmit_retransmit_queue(struct sock *sk)
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	struct sk_buff *skb;
+ 	struct sk_buff *hole = NULL;
+-	u32 last_lost;
++	u32 max_segs, last_lost;
+ 	int mib_idx;
+ 	int fwd_rexmitting = 0;
+ 
+@@ -2769,8 +2769,10 @@ void tcp_xmit_retransmit_queue(struct sock *sk)
+ 		last_lost = tp->snd_una;
+ 	}
+ 
++	max_segs = tcp_tso_autosize(sk, tcp_current_mss(sk));
+ 	tcp_for_write_queue_from(skb, sk) {
+ 		__u8 sacked = TCP_SKB_CB(skb)->sacked;
++		int segs;
+ 
+ 		if (skb == tcp_send_head(sk))
+ 			break;
+@@ -2787,6 +2789,10 @@ void tcp_xmit_retransmit_queue(struct sock *sk)
+ 		 */
+ 		if (tcp_packets_in_flight(tp) >= tp->snd_cwnd)
+ 			return;
++		/* In case tcp_shift_skb_data() have aggregated large skbs,
++		 * we need to make sure not sending too bigs TSO packets
++		 */
++		segs = min_t(int, segs, max_segs);
+ 
+ 		if (fwd_rexmitting) {
+ begin_fwd:

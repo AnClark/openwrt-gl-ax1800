@@ -1,0 +1,27 @@
+  CC      net/ipv4/tcp.o
+In file included from include/linux/linkage.h:4:0,
+                 from include/linux/kernel.h:6,
+                 from net/ipv4/tcp.c:250:
+net/ipv4/tcp.c: In function 'tcp_init':
+include/linux/compiler.h:484:38: error: call to '__compiletime_assert_3127' declared with attribute error: BUILD_BUG_ON failed: (sizeof(struct tcp_skb_cb)) > SOCK_SKB_CB_OFFSET
+  _compiletime_assert(condition, msg, __compiletime_assert_, __LINE__)
+                                      ^
+include/linux/compiler.h:467:4: note: in definition of macro '__compiletime_assert'
+    prefix ## suffix();    \
+    ^~~~~~
+include/linux/compiler.h:484:2: note: in expansion of macro '_compiletime_assert'
+  _compiletime_assert(condition, msg, __compiletime_assert_, __LINE__)
+  ^~~~~~~~~~~~~~~~~~~
+include/linux/bug.h:50:37: note: in expansion of macro 'compiletime_assert'
+ #define BUILD_BUG_ON_MSG(cond, msg) compiletime_assert(!(cond), msg)
+                                     ^~~~~~~~~~~~~~~~~~
+include/linux/bug.h:74:2: note: in expansion of macro 'BUILD_BUG_ON_MSG'
+  BUILD_BUG_ON_MSG(condition, "BUILD_BUG_ON failed: " #condition)
+  ^~~~~~~~~~~~~~~~
+include/net/sock.h:2137:2: note: in expansion of macro 'BUILD_BUG_ON'
+  BUILD_BUG_ON((size) > SOCK_SKB_CB_OFFSET)
+  ^~~~~~~~~~~~
+net/ipv4/tcp.c:3127:2: note: in expansion of macro 'sock_skb_cb_check_size'
+  sock_skb_cb_check_size(sizeof(struct tcp_skb_cb));
+  ^~~~~~~~~~~~~~~~~~~~~~
+make[6]: *** [scripts/Makefile.build:338: net/ipv4/tcp.o] Error 1

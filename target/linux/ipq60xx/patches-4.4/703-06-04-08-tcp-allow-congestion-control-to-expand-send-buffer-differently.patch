@@ -1,0 +1,65 @@
+commit 77bfc174c38e558a3425d3b069aa2762b2fedfdd
+Author: Yuchung Cheng <ycheng@google.com>
+Date:   Mon Sep 19 23:39:20 2016 -0400
+
+    tcp: allow congestion control to expand send buffer differently
+    
+    Currently the TCP send buffer expands to twice cwnd, in order to allow
+    limited transmits in the CA_Recovery state. This assumes that cwnd
+    does not increase in the CA_Recovery.
+    
+    For some congestion control algorithms, like the upcoming BBR module,
+    if the losses in recovery do not indicate congestion then we may
+    continue to raise cwnd multiplicatively in recovery. In such cases the
+    current multiplier will falsely limit the sending rate, much as if it
+    were limited by the application.
+    
+    This commit adds an optional congestion control callback to use a
+    different multiplier to expand the TCP send buffer. For congestion
+    control modules that do not specificy this callback, TCP continues to
+    use the previous default of 2.
+    
+    Signed-off-by: Van Jacobson <vanj@google.com>
+    Signed-off-by: Neal Cardwell <ncardwell@google.com>
+    Signed-off-by: Yuchung Cheng <ycheng@google.com>
+    Signed-off-by: Nandita Dukkipati <nanditad@google.com>
+    Signed-off-by: Eric Dumazet <edumazet@google.com>
+    Signed-off-by: Soheil Hassas Yeganeh <soheil@google.com>
+    Acked-by: Stephen Hemminger <stephen@networkplumber.org>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 349204130d84..1aa9628ae608 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -917,6 +917,8 @@ struct tcp_congestion_ops {
+ 	void (*pkts_acked)(struct sock *sk, const struct ack_sample *sample);
+ 	/* suggest number of segments for each skb to transmit (optional) */
+ 	u32 (*tso_segs_goal)(struct sock *sk);
++	/* returns the multiplier used in tcp_sndbuf_expand (optional) */
++	u32 (*sndbuf_expand)(struct sock *sk);
+ 	/* get info for inet_diag (optional) */
+ 	size_t (*get_info)(struct sock *sk, u32 ext, int *attr,
+ 			   union tcp_cc_info *info);
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index d9ed4bb96f74..13a2e70141f5 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -289,6 +289,7 @@ static bool tcp_ecn_rcv_ecn_echo(const struct tcp_sock *tp, const struct tcphdr
+ static void tcp_sndbuf_expand(struct sock *sk)
+ {
+ 	const struct tcp_sock *tp = tcp_sk(sk);
++	const struct tcp_congestion_ops *ca_ops = inet_csk(sk)->icsk_ca_ops;
+ 	int sndmem, per_mss;
+ 	u32 nr_segs;
+ 
+@@ -309,7 +310,8 @@ static void tcp_sndbuf_expand(struct sock *sk)
+ 	 * Cubic needs 1.7 factor, rounded to 2 to include
+ 	 * extra cushion (application might react slowly to POLLOUT)
+ 	 */
+-	sndmem = 2 * nr_segs * per_mss;
++	sndmem = ca_ops->sndbuf_expand ? ca_ops->sndbuf_expand(sk) : 2;
++	sndmem *= nr_segs * per_mss;
+ 
+ 	if (sk->sk_sndbuf < sndmem)
+ 		sk->sk_sndbuf = min(sndmem, sysctl_tcp_wmem[2]);
