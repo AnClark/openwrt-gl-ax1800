@@ -312,13 +312,13 @@ index 6327e4d368a4..9a1a1494b9dd 100644
  
  	if ((tp->snd_cwnd > tcp_packets_in_flight(tp)) &&
 diff --git a/net/ipv4/tcp_timer.c b/net/ipv4/tcp_timer.c
-index 28cb32cd..baa3d7d2 100644
+index 953c02a8566e..40d893556e67 100644
 --- a/net/ipv4/tcp_timer.c
 +++ b/net/ipv4/tcp_timer.c
-@@ -511,9 +511,6 @@ void tcp_write_timer_handler(struct sock *sk)
- 	event = icsk->icsk_pending;
- 
- 	switch (event) {
+@@ -566,9 +566,6 @@ void tcp_write_timer_handler(struct sock *sk)
+ 	case ICSK_TIME_REO_TIMEOUT:
+ 		tcp_rack_reo_timeout(sk);
+ 		break;
 -	case ICSK_TIME_EARLY_RETRANS:
 -		tcp_resume_early_retransmit(sk);
 -		break;
