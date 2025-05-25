@@ -1,0 +1,54 @@
+commit e1a10ef7fa876f8510aaec36ea5c0cf34baba410
+Author: Neal Cardwell <ncardwell@google.com>
+Date:   Thu Aug 3 09:19:52 2017 -0400
+
+    tcp: introduce tcp_rto_delta_us() helper for xmit timer fix
+    
+    Pure refactor. This helper will be required in the xmit timer fix
+    later in the patch series. (Because the TLP logic will want to make
+    this calculation.)
+    
+    Fixes: 6ba8a3b19e76 ("tcp: Tail loss probe (TLP)")
+    Signed-off-by: Neal Cardwell <ncardwell@google.com>
+    Signed-off-by: Yuchung Cheng <ycheng@google.com>
+    Signed-off-by: Nandita Dukkipati <nanditad@google.com>
+    Acked-by: Eric Dumazet <edumazet@google.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 70483296157f..ada65e767b28 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -1916,6 +1916,16 @@ extern void tcp_rack_advance(struct tcp_sock *tp, u8 sacked, u32 end_seq,
+ 			     u64 xmit_time);
+ extern void tcp_rack_reo_timeout(struct sock *sk);
+ 
++/* At how many usecs into the future should the RTO fire? */
++static inline s64 tcp_rto_delta_us(const struct sock *sk)
++{
++	const struct sk_buff *skb = tcp_write_queue_head(sk);
++	u32 rto = inet_csk(sk)->icsk_rto;
++	u64 rto_time_stamp_us = skb->skb_mstamp + jiffies_to_usecs(rto);
++
++	return rto_time_stamp_us - tcp_sk(sk)->tcp_mstamp;
++}
++
+ /*
+  * Save and compile IPv4 options, return a pointer to it
+  */
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index dad026fcfd09..b9ba8d55d8b8 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -3004,10 +3004,7 @@ void tcp_rearm_rto(struct sock *sk)
+ 		/* Offset the time elapsed after installing regular RTO */
+ 		if (icsk->icsk_pending == ICSK_TIME_REO_TIMEOUT ||
+ 		    icsk->icsk_pending == ICSK_TIME_LOSS_PROBE) {
+-			struct sk_buff *skb = tcp_write_queue_head(sk);
+-			u64 rto_time_stamp = skb->skb_mstamp +
+-					     jiffies_to_usecs(rto);
+-			s64 delta_us = rto_time_stamp - tp->tcp_mstamp;
++			s64 delta_us = tcp_rto_delta_us(sk);
+ 			/* delta_us may not be positive if the socket is locked
+ 			 * when the retrans timer fires and is rescheduled.
+ 			 */
